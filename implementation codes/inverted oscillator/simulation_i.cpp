@@ -19,20 +19,20 @@ int init_(){
 const MKL_INT n_max = N_MAX;
 const double omega = OMEGA;
 
-const static struct matrix_descr descr = {SPARSE_MATRIX_TYPE_DIAGONAL, SPARSE_FILL_MODE_UPPER, SPARSE_DIAG_NON_UNIT};
-static MKL_Complex16 ab[3][n_max+1]={{0.,0.}}, ab_LU[4][n_max+1]={{0.,0.}}; MKL_INT LU_ipiv[n_max+1];
+const static struct matrix_descr descr = {SPARSE_MATRIX_TYPE_HERMITIAN, SPARSE_FILL_MODE_UPPER, SPARSE_DIAG_NON_UNIT};
+static MKL_Complex16 ab[5][n_max+1]={{0.,0.}}, ab_LU[7][n_max+1]={{0.,0.}}; MKL_INT LU_ipiv[n_max+1];
 
 class Set_World{
 public:
-    double n_phonon[n_max+1], sqrt_n[n_max]; 
+    double n_phonon[n_max+1], sqrt_n[n_max];
     sparse_matrix_t annihilation, creation;
     sparse_matrix_t x_hat, x_hat_2, p_hat_2, harmonic_Hamil;
     sparse_matrix_t p_hat, xp_px_hat; // these two involve complex numbers
     double x_upper_diag[n_max+1], x_lower_diag[n_max+1];
     //double x_banded[2*(n_max+1)]={0.};
     double x_upper_diag_ab[n_max+1]={0.}, x_lower_diag_ab[n_max+1]={0.};
-    double ab_center[n_max+1]={0.};
-    MKL_INT ja_H[n_max+1], ia_H[n_max+2]; MKL_Complex16 acsr_H[n_max+2]; 
+    double ab_upper2[n_max+1]={0.}, ab_lower2[n_max+1]={0.};
+
 
     int init_status = 0;
 
@@ -47,7 +47,7 @@ public:
     for(int i=1;i < n_max+1;i++){sqrt_n[i-1]=std::sqrt((double)(i));}
     MKL_INT n=n_max+1;
 
-    sparse_status_t status;
+    sparse_status_t status; 
     empty_rowindex_start = (MKL_INT*)mkl_malloc(sizeof(MKL_INT)*n_max+1, 64);
     empty_rowindex_end =   (MKL_INT*)mkl_malloc(sizeof(MKL_INT)*n_max+1, 64);
     empty_column =         (MKL_INT*)mkl_malloc(sizeof(MKL_INT)*1      , 64);
@@ -79,7 +79,7 @@ public:
        N/A, N/A, check zeroes and leave out them */
 
     // vairables for the CSR matrix, the "_rem"s are not used. There should be exactly n_max values in total. 
-    double acsr[n_max]; double* acsr_rem; MKL_INT ja[n_max], ia[n_max+1+1]; MKL_INT* ja_rem, *ia_rem;
+    double acsr[n_max+1]; double* acsr_rem; MKL_INT ja[n_max+1], ia[n_max+1+1]; MKL_INT* ja_rem, *ia_rem;
     // variables for the diagonal format matrix. "adia" is "sqrt_n_append1".
     MKL_INT ndiag=n, distance[1]={1}, idiag=1, info;
     // change the format to CSR:
@@ -87,9 +87,9 @@ public:
     //transform the value array into a proper complex valued array, by filling zeroes.
     MKL_Complex16 acsr_z[n_max]={{0.,0.}};
     for (int i=0;i<n_max;i++){ acsr_z[i].real = acsr[i]; }
-    
+
     //create annihilation and creation operator
-    sparse_matrix_t temp, temp2;
+    sparse_matrix_t temp, temp2, temp3;
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_z_create_csr (&temp, SPARSE_INDEX_BASE_ZERO, n, n, ia, ia+1, ja, acsr_z) && init_status==0){init_status = -2;}
 
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_copy (temp, {SPARSE_MATRIX_TYPE_GENERAL,SPARSE_FILL_MODE_UPPER,SPARSE_DIAG_NON_UNIT}, &annihilation) && init_status==0){init_status = -2;}
@@ -113,18 +113,37 @@ public:
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_z_add (SPARSE_OPERATION_CONJUGATE_TRANSPOSE, temp, {1.,0.}, temp2, &xp_px_hat) && init_status==0){init_status = -11;}
     if ((SPARSE_STATUS_SUCCESS!=mkl_sparse_destroy (temp)||SPARSE_STATUS_SUCCESS!=mkl_sparse_destroy (temp2)) && init_status==0){init_status = -12;}
 
-    //create Hamiltonian
+    //create Hamiltonian and upper/lower diagonals
     // take care!!! somehow, destroying an uninitialized sparse matrix results in a memory error in the constructor, without throwing out any error signal
-    MKL_Complex16 H_diagonal[n_max+1]={{0.,0.}};
-    for(int i=0;i<n_max+1;i++){H_diagonal[i].real=omega*(0.5+n_phonon[i]);ab_center[i]=omega*(0.5+n_phonon[i])*0.5;}
-    MKL_Complex16 acsr_rem_H[n_max+2];
-    distance[0]=0;
-    mkl_zcsrdia (job, &n , acsr_H , ja_H , ia_H , H_diagonal , &ndiag , distance , &idiag , acsr_rem_H , ja_rem , ia_rem , &info );
-    if (SPARSE_STATUS_SUCCESS!=mkl_sparse_z_create_csr (&harmonic_Hamil, SPARSE_INDEX_BASE_ZERO, n, n, ia_H, ia_H+1, ja_H, acsr_H) && init_status==0){init_status = -13;}
+    if (SPARSE_STATUS_SUCCESS!=mkl_sparse_spmm (SPARSE_OPERATION_NON_TRANSPOSE, creation, creation, &temp) && init_status==0){init_status = -13;}
+    if (SPARSE_STATUS_SUCCESS!=mkl_sparse_spmm (SPARSE_OPERATION_NON_TRANSPOSE, annihilation, annihilation, &temp2) && init_status==0){init_status = -13;}
+
+    if (SPARSE_STATUS_SUCCESS!=mkl_sparse_z_add (SPARSE_OPERATION_NON_TRANSPOSE, temp, {-0.5*omega,0.}, empty_matrix, &temp3) && init_status==0){init_status = -14;}
+    if (SPARSE_STATUS_SUCCESS!=mkl_sparse_z_add (SPARSE_OPERATION_NON_TRANSPOSE, temp2, {-0.5*omega,0.}, temp3, &harmonic_Hamil) && init_status==0){init_status = -15;}
+
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_order (harmonic_Hamil) && init_status==0){init_status = -16;}
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_order (x_hat) && init_status==0){init_status = -17;}
+    if ((SPARSE_STATUS_SUCCESS!=mkl_sparse_destroy (temp)||SPARSE_STATUS_SUCCESS!=mkl_sparse_destroy (temp2)||SPARSE_STATUS_SUCCESS!=mkl_sparse_destroy (temp3)) \
+         && init_status==0){init_status = -21;}
 
-    for(int i=0;i < n_max+1;i++){ab[1][i].real=1.;}
+    job[0]=0, job[5]=10;
+    // **********IMPORTANT*********** Due to our explicit use of empty matrix in the form of stored 0-valued csr memory, it will be jugded as containing non-trivial values
+    // and asks for more memory to proceed the calculation. Therefore, the required memory to store the diagonals is more than 2*(n_max+1), or otherwise it causes segmentation fault.
+    MKL_INT distances[n_max+1], rows, cols, *rows_start, *rows_end, *col_indx;
+    MKL_Complex16 diagonals[n_max+1][n_max+1], *values; // an array cannot be referenced to be passed as data_type ** xxx.
+    sparse_index_base_t index_type;
+    idiag = 2;
+    MKL_Complex16 *z_acsr_rem;
+    if (SPARSE_STATUS_SUCCESS!=mkl_sparse_z_export_csr (harmonic_Hamil, &index_type, &rows, &cols, &rows_start, &rows_end, &col_indx, &values) && init_status==0){init_status = -17;}
+    MKL_INT rowindex[n_max+1+1]; for(int i=0;i<n_max+1;i++){rowindex[i]=rows_start[i];} rowindex[n_max+1]=rows_end[n_max];
+    // ** it is not mentioned that compressed diagonal arrays are in column major format ! But they are! **
+    mkl_zcsrdia (job , &n , values , col_indx , rowindex , &(diagonals[0][0]) , &ndiag , distances , &idiag , z_acsr_rem , ja_rem , ia_rem , &info);
+    // initialize the matrix ab. *The storage of the extracted diagonals is of the reverse order of the banded matrix storage.
+    for(int j=0;j<n_max+1;j++){
+        if (distances[j]==-2){for(int i=0;i < n_max+1;i++){ab_lower2[i]=diagonals[j][i].real*0.5;}}
+        if (distances[j]==+2){for(int i=0;i < n_max+1;i++){ab_upper2[i]=diagonals[j][i].real*0.5;}}
+    }
+    for(int i=0;i < n_max+1;i++){ab[2][i].real=1.;}
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_set_mv_hint (harmonic_Hamil, SPARSE_OPERATION_NON_TRANSPOSE, descr, 100000000) && init_status==0){init_status = -18;}
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_optimize (harmonic_Hamil) && init_status==0){init_status = -19;}
     if (SPARSE_STATUS_SUCCESS!=mkl_sparse_optimize (x_hat) && init_status==0){init_status = -20;}
@@ -206,7 +225,7 @@ static sparse_matrix_t Hamiltonian_addup_factor;
 static sparse_matrix_t Hamil_temp[8];
 static int reset_ab(bool change_t){
     double* pointer1, *pointer2;
-    pointer1=&(ab[0][1].imag), pointer2=&(ab[2][0].imag);
+    pointer1=&(ab[1][1].imag), pointer2=&(ab[3][0].imag);
     double coefficent=_dt_cache*_force_cache;
     // compute the 1st upper diagonal
     cblas_dcopy (n_max, world.x_lower_diag_ab, 1, pointer2, 2);
@@ -214,22 +233,22 @@ static int reset_ab(bool change_t){
     // copy to the 1st lower diagonal
     cblas_dcopy (n_max, pointer2, 2, pointer1, 2);
     if(change_t){
-        // compute the central diagonal
-        double* pointer3;
-
-        // manipulate the imaginary parts only:
-        pointer3=&(ab[1][0].imag);
-        cblas_dcopy (n_max+1, world.ab_center, 1, pointer3, 2);
-        cblas_dscal (n_max+1, _dt_cache, pointer3, 2);
+        // compute the 2nd upper diagonal
+        double* pointer3, *pointer4;
+        pointer3=&(ab[0][2].imag), pointer4=&(ab[4][0].imag);
+        cblas_dcopy (n_max-1, world.ab_upper2, 1, pointer4, 2);
+        cblas_dscal (n_max-1, _dt_cache, pointer4, 2);
+        // copy to the 2nd lower diagonal
+        cblas_dcopy (n_max-1, pointer4, 2, pointer3, 2);
     }
     sparse_status_t status=mkl_sparse_destroy (Hamiltonian_addup_factor);
     if(SPARSE_STATUS_SUCCESS!=status && SPARSE_STATUS_NOT_INITIALIZED!=status){return -1;}
     /*printf("c update ab matrix\n");
     for(int j=0; j<5; j++){
     for(int i=0; i<5; i++){printf("(%.3f,%.3f)",ab[j][i].real, ab[j][i].imag);}printf("\n");}printf("\n");*/
-    cblas_zcopy (3*(n_max+1), ab, 1, &(ab_LU[1][0]), 1);
-    LAPACKE_zgbtrf (LAPACK_ROW_MAJOR, n_max+1 , n_max+1 , 1 , 1 , &(ab_LU[0][0]) , n_max+1 , LU_ipiv );
-    
+    cblas_zcopy (5*(n_max+1), ab, 1, &(ab_LU[2][0]), 1);
+    LAPACKE_zgbtrf (LAPACK_ROW_MAJOR, n_max+1 , n_max+1 , 2 , 2 , &(ab_LU[0][0]) , n_max+1 , LU_ipiv );
+
     mkl_sparse_z_add (SPARSE_OPERATION_NON_TRANSPOSE, world.x_hat, {-omega*_force_cache, 0.}, world.harmonic_Hamil, &Hamil_temp[0]);
     mkl_sparse_spmm (SPARSE_OPERATION_NON_TRANSPOSE, Hamil_temp[0], Hamil_temp[0], &Hamil_temp[1]); // H^2
     mkl_sparse_spmm (SPARSE_OPERATION_NON_TRANSPOSE, Hamil_temp[1], Hamil_temp[0], &Hamil_temp[2]); // H^3
@@ -281,7 +300,7 @@ static void __attribute__((hot)) D1(MKL_Complex16* state, const double &force, c
 static void __attribute__((hot)) D1ImRe(MKL_Complex16* state, const double &force, const double &gamma, MKL_Complex16* resultIm, MKL_Complex16* resultRe, MKL_Complex16* relative_state){
     // resultIm can replace the role of x_hat_state
     compute_x_hat_state(1., state, 0., resultIm);
-    double x_avg;  
+    double x_avg;
     MKL_Complex16 temp;
     cblas_zdotc_sub (n_max+1, state, 1, resultIm, 1, &temp);
     x_avg = temp.real;
@@ -359,7 +378,7 @@ static PyObject* step(PyObject *self, PyObject *args){
     change_t=(dt != _dt_cache);
     if (change_t||(force != _force_cache)){
         _dt_cache=dt;_force_cache=force;
-        if(0!=reset_ab(change_t)){PyErr_SetString(PyExc_RuntimeError, "Failed to manage the sparse matrices when setting the implicit solver"); return NULL;}
+        if(0!=reset_ab(change_t)){return NULL;}
     }
     double q=0., x_mean=0.;
     go_one_step(psi, dt, force, _gamma, &q, &x_mean);
@@ -390,7 +409,7 @@ static PyObject* simulate_10_steps(PyObject *self, PyObject *args){
     change_t=(dt != _dt_cache);
     if (change_t||(force != _force_cache)){
         _dt_cache=dt;_force_cache=force;
-        if(0!=reset_ab(change_t)){PyErr_SetString(PyExc_RuntimeError, "Failed to manage the sparse matrices when setting the implicit solver"); return NULL;}
+        if(0!=reset_ab(change_t)){return NULL;}
     }
     double q=0., x_mean=0.;
     for(int i=0; i<10; i++){go_one_step(psi, dt, force, _gamma, &q, &x_mean);}
@@ -464,7 +483,7 @@ static void __attribute__((hot)) go_one_step(MKL_Complex16* psi, double dt, doub
                     (double*)D1_state, (double*)D2_Y_plus, (double*)D2_Y_minus, (double*)D2_Phi_plus, (double*)D2_Phi_minus, (double*)D1_Y_plusIm_sum_D1_Y_minusIm);
    
     // implicitly solve
-    LAPACKE_zgbtrs (LAPACK_ROW_MAJOR, 'N' , n_max+1 , 1 , 1 , 1 , &(ab_LU[0][0]) , n_max+1 , LU_ipiv , psi , 1 ); // * note that the number of sub/super diagonals is 1 
+    LAPACKE_zgbtrs (LAPACK_ROW_MAJOR, 'N' , n_max+1 , 2 , 2 , 1 , &(ab_LU[0][0]) , n_max+1 , LU_ipiv , psi , 1 ); // * note that the number of sub/super diagonals is 2 
     normalize(psi);
 }/*
 static void __attribute__((hot)) sum_them_all(MKL_Complex16* state, double dt, double dW, double dZ, MKL_Complex16* D2_state, MKL_Complex16* D1_Y_plusIm_substract_D1_Y_minusIm, MKL_Complex16* D1_Y_plusRe, \
@@ -503,7 +522,7 @@ static void __attribute__((hot)) sum_them_all(MKL_Complex16* state, double dt, d
     // the memory of D2_Y_minus is still not used:
     MKL_Complex16* term7; term7=D2_Y_minus;
     // note that D1_state has included a factor of -1.j ***
-    mkl_sparse_z_mv (SPARSE_OPERATION_NON_TRANSPOSE, {1., 0.}, Hamiltonian_addup_factor, {SPARSE_MATRIX_TYPE_SYMMETRIC, SPARSE_FILL_MODE_UPPER, SPARSE_DIAG_NON_UNIT}, D1_state, {0.,0.}, term7);
+    mkl_sparse_z_mv (SPARSE_OPERATION_NON_TRANSPOSE, {1., 0.}, Hamiltonian_addup_factor, descr, D1_state, {0.,0.}, term7);
 
     // (assert?)
     // sum up
@@ -528,7 +547,7 @@ static void __attribute__((hot)) simple_sum_up(double* state, double dt, double 
 
     MKL_Complex16 term7[n_max+1];
     // note that D1_state has included a factor of -1.j ***
-    mkl_sparse_z_mv (SPARSE_OPERATION_NON_TRANSPOSE, {1., 0.}, Hamiltonian_addup_factor, {SPARSE_MATRIX_TYPE_SYMMETRIC, SPARSE_FILL_MODE_UPPER, SPARSE_DIAG_NON_UNIT}, (MKL_Complex16*)D1_state, {0.,0.}, term7);
+    mkl_sparse_z_mv (SPARSE_OPERATION_NON_TRANSPOSE, {1., 0.}, Hamiltonian_addup_factor, descr, (MKL_Complex16*)D1_state, {0.,0.}, term7);
     double* dterm7;
     dterm7=(double*)term7;
     // summation for the implicit method
@@ -603,7 +622,7 @@ static PyMethodDef methods[] = {
     {"set_seed", (PyCFunction)set_seed, METH_VARARGS,
      "Initialize the random number generator with a seed."},
     {"check_settings", (PyCFunction)check_settings, METH_VARARGS,
-     "test whether the imported C module responds and return (n_max,\\omega)."},
+     "test whether the imported C module responds and return (n_max,omega)."},
     {"x_expectation", (PyCFunction)x_expectation,METH_VARARGS,""},
     {"Hamiltonian_dot_psi", (PyCFunction)Hamiltonian_dot_psi,METH_VARARGS,""},
     {"solve_ab", (PyCFunction)solve_ab,METH_VARARGS,""},

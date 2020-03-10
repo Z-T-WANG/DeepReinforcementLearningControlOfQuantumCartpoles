@@ -13,8 +13,7 @@ import time, random
 from termcolor import colored
 import os
 
-t_max = 100.
-F_max = 5.
+F_max = 8.
 def set_parameters(**kwargs):
     if 'read_step_length' in kwargs:
         global read_step_length
@@ -22,9 +21,6 @@ def set_parameters(**kwargs):
     if 'failing_reward' in kwargs:
         global failing_reward
         failing_reward = kwargs['failing_reward']
-    if 't_max' in kwargs:
-        global t_max
-        t_max = kwargs['t_max']
     if 'F_max' in kwargs:
         global F_max
         F_max = kwargs['F_max']
@@ -40,12 +36,15 @@ class DQN_measurement(nn.Module):
         k2 = 11; s2 = 4
         k3 = 9; s3 = 4
         filters = (32, 64, 64)
-        self.conv1=layers.Conv1d_weight_normalize(2, filters[0], kernel_size = k1, stride = s1, padding = 0, bias = not self.Batch_Normalize)
+        self.conv1=nn.Conv1d(2, filters[0], kernel_size = k1, stride = s1, padding = 0, bias = not self.Batch_Normalize)
         if self.Batch_Normalize: self.bn1=layers.BatchRenorm1d(filters[0])
-        self.conv2=layers.Conv1d_weight_normalize(filters[0], filters[1], kernel_size = k2, stride = s2, padding = 0, bias = not self.Batch_Normalize)
+        self.conv2=nn.Conv1d(filters[0], filters[1], kernel_size = k2, stride = s2, padding = 0, bias = not self.Batch_Normalize)
         if self.Batch_Normalize: self.bn2=layers.BatchRenorm1d(filters[1])
-        self.conv3=layers.Conv1d_weight_normalize(filters[1], filters[2], kernel_size = k3, stride = s3, padding = 0, bias = not self.Batch_Normalize)
+        self.conv3=nn.Conv1d(filters[1], filters[2], kernel_size = k3, stride = s3, padding = 0, bias = not self.Batch_Normalize)
         if self.Batch_Normalize: self.bn3=layers.BatchRenorm1d(filters[2])
+        if not self.Batch_Normalize:
+            for conv in [self.conv1, self.conv2, self.conv3]:
+                conv.bias.data.zero_()
         def calculate_next_layer_dim(number, k, s):
             return (number-(k-1)+(s-1)) // s
         number = calculate_next_layer_dim(inputs, k1, s1)
@@ -131,6 +130,8 @@ class TrainDQN(object):
         self.memory = memory
         self.batch_size = batch_size
 
+        self.alive_reward = args.alive_reward
+
         self.backup_counter = 0
         self.backup_period = backup_period
 
@@ -140,7 +141,7 @@ class TrainDQN(object):
         # prepare to train
         self.net, self.target_net = self.net.cuda(), self.target_net.cuda()
         # the optimizer ***
-        self.optim = LaProp(self.net.parameters(), lr=args.lr, centered=True) #,amsgrad=True , centered=True
+        self.optim = LaProp(self.net.parameters(), lr=args.lr, centered=True) #,amsgrad=True , centered=True, betas=(0.9,0.999)
         self.net.train()
         self.target_net.train()
 
@@ -171,7 +172,7 @@ class TrainDQN(object):
         # prepare the input data.
         # the organization of measurement data is different from others:
         if self.measurement:
-            # measurements are stored in the order of
+            # measurements are stored in the order of:
             # [recent, ..., old]
             # This is a must, because when doing convolution, more recent measurements must not be truncated if the convolution does not fully divide.
             # Therefore, next_states is the former, previous_states is the latter.
@@ -183,7 +184,7 @@ class TrainDQN(object):
             actions_to_read = self.input_length//read_step_length
             # the "actions" contain all the applied forces during the measurements "total_length", i.e., # actions_to_read + 1.
             actions = transitions[:,total_length:total_length+actions_to_read+1].cuda(non_blocking=True).unsqueeze(2)\
-                                                                   .expand(-1,-1,read_step_length) # the method "expand" does not copy
+                                                                  .expand(-1,-1,read_step_length) # the method "expand" does not copy
             # the expanded "actions" tensor cannot be flattened about its the last two dims;
             # however, we can change the view shapes of the "states" tensors to do the broadcasting
             previous_states.view(self.batch_size,2,actions_to_read,read_step_length)[:,1,:,:] = actions[:,1:,:]
@@ -201,7 +202,8 @@ class TrainDQN(object):
         # call by index will reduce the number of dim by 1 at the called dimension
         state_action_values = action_values.gather(1, transitions[:,-2].cuda().unsqueeze(1).long()).squeeze() + avg_value - action_values.mean(dim=1)
         # rescale the rewards by (1-\gamma_r)
-        rewards = (1-self.gamma)*transitions[:,-1].cuda()
+        rewards = (1-self.gamma) * self.alive_reward
+        fail_mask = (transitions[:,-1]==failing_reward).cuda()
         # up to the above line, the use of data in array "transitions" is over, so it can be updated by
         # the next batch data using a separate process to enhance the parallelization 
         self.memory.request_sample(self.batch_size)
@@ -209,7 +211,7 @@ class TrainDQN(object):
         next_action_values, next_avg_value, _noise = self.target_net(next_states, noise)
         next_state_values = next_action_values.gather(1, next_actions.unsqueeze(1)).squeeze() + next_avg_value - next_action_values.mean(dim=1)
         expected_state_action_values = (next_state_values * self.gamma) + rewards
-
+        expected_state_action_values[fail_mask] = 0.
         unweighted_loss = F.mse_loss(state_action_values, expected_state_action_values, reduction='none')
         ISWeights = torch.from_numpy(ISWeights).to(unweighted_loss)
         loss = (unweighted_loss*ISWeights).mean()
@@ -223,17 +225,16 @@ class TrainDQN(object):
         # print deviation error
         self.report_i += 1
         if self.report_i >= self.report_period:
-            assert not np.isnan(self.accu_err), '"NAN" encountered in loss values. Numerical error has appeared.'
             print('RMS error {:.3g}\t'.format(math.sqrt(self.accu_err/self.report_i)), flush=True)
+            assert not np.isnan(self.accu_err), '"NAN" encountered in loss values. Numerical error has appeared.'
             self.clear_report()            
         return loss
-
 
 class SumTree(object):
     """
     This SumTree code is a modified version and the original code is from:
     https://github.com/jaara/AI-blog/blob/master/SumTree.py
-    Story data with its priority in the tree.
+    Store data with its priority in the tree.
     """
     data_pointer = 0
     def __init__(self, capacity, data_size, data_tree = None, policy = 'random', passes_before_random = 0.):
@@ -357,21 +358,20 @@ def compiled_get_leaf(v, tree, capacity, data):
                 parent_idx = cr_idx
 
     data_idx = leaf_idx - (len(tree)-capacity)
-    if data_idx < 0:
-        return leaf_idx, 0., None
-    else:
-        return leaf_idx, tree[leaf_idx], data[data_idx]
+    if data_idx >= capacity:
+        data_idx = capacity - 1
+    return leaf_idx, tree[leaf_idx], data[data_idx]
 
 class Memory(object):  # stored as ( s, action, reward ) in SumTree
     """
     This Memory class is modified based on the original code from:
     https://github.com/jaara/AI-blog/blob/master/Seaquest-DDQN-PER.py
     """
-    epsilon = 0.001  # small amount to avoid zero priority
+    epsilon = 0.01  # small amount to avoid zero priority
     alpha = 0.3  # [0~1] convert the importance of TD error to priority
     beta = 0.2  # importance-sampling, from initial value increasing to 1
     beta_increment_per_sampling = 0.001
-    abs_err_upper = 10.  # clipped abs error
+    abs_err_upper = 1.  # clipped abs error
 
     def __init__(self, capacity, data_size, data_tree=None, policy = 'sequential', passes_before_random = 0.):
         self.inputs = {'capacity':capacity, 'data_size':data_size, 'policy':policy}
@@ -438,8 +438,8 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
         if hasattr(self,'batch_update_queue'):
             self.batch_update_queue.put((tree_idx, abs_errors))
             return
-        self.epsilon = 0.001 * self.max
-        abs_errors += self.epsilon  # convert to abs and avoid 0
+        self.epsilon = 0.01 * self.max
+        abs_errors += self.epsilon  # avoid 0
         clipped_errors = np.minimum(abs_errors, self.abs_err_upper)
         compiled_batch_update(tree_idx,clipped_errors,self.alpha,self.tree.tree)
         self.max = 0.95 * max(self.max, np.max(clipped_errors))
@@ -481,6 +481,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
     pending_training_updates, episode, t_done, last_achieved_time = shared_data
     pause = False
     last_idle_time=0.
+    start_time = time.time()
     last_time = time.time()
     loaded = False
     while not loaded:
@@ -490,18 +491,20 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
         else: time.sleep(0.05)
     pause_event, end_event, learning_in_progress_event = shared_things
     os.environ["NUMBA_NUM_THREADS"]="1"
+    learning_started = False; accu_t = 0.; i_report = 0
+    train = True; numerical_failure_count = 0
     while not end_event.is_set():
         something_done = False
         last_episode = episode.value
         while not MemoryQueue.empty():
             # for each episode data put into the Queue:
             something_done = True; episode.value += 1
-            experience, t, avg_phonon = MemoryQueue.get()
+            experience, t, numerical_failure = MemoryQueue.get()
             num_of_sample = len(experience)
-            if num_of_sample==0 and not learning_in_progress_event.is_set(): learning_in_progress_event.set() 
+            if train and num_of_sample == 0: train = False; learning_started = True; learning_in_progress_event.set()
             for i, array in enumerate(experience):
                 memory_in.store(array)
-                # This block may take a lot of time. We hope it can do the sampling used for training simultaneously.
+                # This block takes a lot of time. We hope it can do sampling for training simultaneously.
                 if i%32==0:
                     if sampling_request_recv.poll() and not sampling_queue.full():
                         n = sampling_request_recv.recv()
@@ -514,30 +517,39 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
                 pending_training_updates.value += num_of_sample * 8. / 256.
             # This above line indicates we use each sample for the standard 8 times by default,
             # which can be effectively rescaled in "main*.py".
+            if train:
+                # for convenience, we use an exponential averaging of the recent achieved time
+                last_achieved_time.value = last_achieved_time.value*0.98 + 0.02*t
+                # decide whether the training is just starting (we use the threshold 20 to decide)
+                if last_achieved_time.value >= 20. and not learning_started: 
+                    learning_started = True
+                    learning_in_progress_event.set()
+                    print('\nSet the counting of Episodes')
+                    episode.value = 1; last_episode = 1
+                    i_report = 0; accu_t = 0.; numerical_failure_count = 0
+                # decide whether the performance has fallen back after it has started (we use the threshold 5)
+                elif learning_started and last_achieved_time.value < 5.: 
+                    learning_started = False
+                    learning_in_progress_event.clear()
 
-            # decide whether the training is just starting
-            if last_achieved_time.value != t_max:
-                if last_achieved_time.value < t:
-                    if t < t_max:
-                        last_achieved_time.value = t
-                    else:
-                        print('\nSet the counting of Episodes')
-                        episode.value = 1; failure_counter = 0
-                        last_achieved_time.value = t
-                        last_episode = 1
-                        learning_in_progress_event.set()
-            elif t < t_max:
-                # If last_achieved_time.value == t_max but the new experience fails, we check whether it continues failing,
-                # and if so, we reset the "last_achieved_time" and go back 
-                failure_counter += 1
-                # we customarily let the counter reset when 10 successive failures occur 
-                if failure_counter == 10: last_achieved_time.value = t; learning_in_progress_event.clear()
-            elif failure_counter != 0: failure_counter = 0
+            i_report += 1; accu_t += t
+            if numerical_failure:
+                numerical_failure_count += 1
 
-            if t != t_max: 
-                if last_achieved_time.value==t_max or episode.value%10==0:
-                    print('Episode {}\tt = {:.2f}'.format(episode.value, t))
-            else: print('Episode {}\tavg phonon = {:.5f}'.format(episode.value, avg_phonon), flush=True)
+            if learning_started:
+                report_period = 400
+                if episode.value % 4 == 0:
+                    print('Episode {}\tt = {:.2f}'.format(episode.value, t), flush=True)
+            else: 
+                report_period = 1000
+                if episode.value % 20 == 0:
+                    print('Episode {}\tt = {:.2f}'.format(episode.value, t), flush=True)
+
+            if i_report == report_period: 
+                print(colored('t avg: {:.3f} in {} episodes'.format(accu_t/i_report, i_report), 'green'))
+                print(colored('high energy numerical imprecision failure {}/{}'.format(numerical_failure_count, i_report), 'red'))
+                i_report = 0; accu_t = 0.; numerical_failure_count = 0
+
 
             # We are not sure whether a pause functionality is really needed, and it is added only for consistency with other processes. We have never
             # observed that the pause here can be triggered, and therefore, it has not been tested and there can be undiscovered bugs possibly.
@@ -557,7 +569,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
             time.sleep(0.01); last_idle_time+=0.01 # if not something done, pause for 0.01 second
             # if this sleep time is too large (e.g. 0.2), it will become a bottleneck of the whole program because this is in the main loop.
             # Take care.
-        elif last_idle_time != 0. and time.time() - last_time > 40.: 
+        elif last_idle_time != 0. and time.time() - last_time > 50.: 
             print('loader pending for {:.1f} seconds out of {:.1f}'.format(last_idle_time, time.time() - last_time))
             last_idle_time = 0.
             last_time = time.time()
