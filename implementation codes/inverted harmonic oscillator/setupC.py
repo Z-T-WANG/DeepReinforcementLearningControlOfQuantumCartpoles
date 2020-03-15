@@ -6,10 +6,10 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--omega', default= 1 * pi, type=float, metavar='\omega',
-                    help='the angular frequency of the harmonic oscillator (in units of time^{-1})')
-parser.add_argument('--n_max', default=70, type=int, metavar='n_{max}',
+                    help='the angular frequency of the non-inverted harmonic oscillator (in units of time^{-1})')
+parser.add_argument('--n_max', default = 160, type=int, metavar='n_{max}',
                     help='the highest energy level of simulation. The last output (Failure) will be True if the amplitude on this level is too high.')
-parser.add_argument('--gamma', default = 1 * pi, type=float, metavar='\gamma',
+parser.add_argument('--gamma', default = 2 * pi, type=float, metavar='\gamma',
                     help='the measurement strength \gamma on the particle')
 args = parser.parse_args()
 
@@ -29,7 +29,6 @@ compiler_options = ['-DMKL_ILP64','-m64']
 
 def compile(n_max, omega, gamma):
     assert type(n_max)==int and type(omega)==float
-    assert gamma > 0., 'The measurement strength \gamma should be larger than 0.'
 
     # It invokes the native "distutils.core" of Python by setting the commandline arguments stored in sys.argv to the desired one ("build")
 
@@ -48,9 +47,9 @@ def compile(n_max, omega, gamma):
     module1 = Extension(package_name,language='c++',
                     define_macros = [('N_MAX', str(n_max)), ('OMEGA', repr(omega))],
                     include_dirs = [np.get_include(), os.path.join(os.environ['MKLROOT'],'include')],
-                    sources = [package_name+'.cpp'], 
+                    sources = ['simulation_i.cpp'], 
                     extra_compile_args = compiler_options + ['-std=c++14','-Ofast','-funroll-loops', '-march=native', '-flto','-fuse-linker-plugin','--param', 'ipcp-unit-growth=2000','-fno-stack-protector','-fmerge-all-constants'], 
-                    extra_link_args = link_options+['-std=c++14','-Ofast','-fdelete-null-pointer-checks','-funroll-loops', '-march=native', '-fwhole-program','-flto','-fuse-linker-plugin','--param', 'ipcp-unit-growth=2000','-fno-stack-protector','-fmerge-all-constants']
+                    extra_link_args = link_options + ['-std=c++14','-Ofast','-fdelete-null-pointer-checks','-funroll-loops', '-march=native', '-fwhole-program','-flto','-fuse-linker-plugin','--param', 'ipcp-unit-growth=2000','-fno-stack-protector','-fmerge-all-constants']
                     )
 
     setup (name = package_name,

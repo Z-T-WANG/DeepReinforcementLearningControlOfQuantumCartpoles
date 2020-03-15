@@ -11,7 +11,8 @@ from multiprocessing.sharedctypes import Value, RawValue, RawArray
 import multiprocessing as mp
 import time, random
 from termcolor import colored
-import os
+import os, sys
+from arguments import args
 
 t_max = 100.
 F_max = 5.
@@ -22,6 +23,9 @@ def set_parameters(**kwargs):
     if 't_max' in kwargs:
         global t_max
         t_max = kwargs['t_max']
+    if 'failing_reward' in kwargs:
+        global failing_reward
+        failing_reward = kwargs['failing_reward']
     if 'F_max' in kwargs:
         global F_max
         F_max = kwargs['F_max']
@@ -137,7 +141,7 @@ class TrainDQN(object):
         # prepare to train
         self.net, self.target_net = self.net.cuda(), self.target_net.cuda()
         # the optimizer ***
-        self.optim = LaProp(self.net.parameters(), lr=args.lr, centered=True) #,amsgrad=True , centered=True
+        self.optim = LaProp(self.net.parameters(), lr=args.lr, centered=True, betas = (0.9, 0.9995)) #,amsgrad=True , centered=True
         self.net.train()
         self.target_net.train()
 
@@ -150,7 +154,6 @@ class TrainDQN(object):
     def clear_report(self):
         self.report_i = 0
         self.accu_err = 0.
-        
     def __call__(self):
         # when a sampling is too large to obtain from the current replay memory, directly ignore
         if len(self.memory) < self.batch_size: return
@@ -166,46 +169,28 @@ class TrainDQN(object):
         net, transitions = self.net, self.transitions
         indices, ISWeights = self.memory.obtain_sample(self.batch_size)
         # prepare the input data.
-        # the organization of measurement data is different from others:
-        if self.measurement:
-            # measurements are stored in the order of
-            # [recent, ..., old]
-            # This is a must, because when doing convolution, more recent measurements must not be truncated if the convolution does not fully divide.
-            # Therefore, next_states is the former, previous_states is the latter.
-            total_length = read_step_length+self.input_length
-            next_states, previous_states = self.next_states_storage, self.previous_states_storage
-            # Conv1d requires a channel specification, dim=1
-            previous_states[:,0,:] = transitions[:,read_step_length:total_length]
-            next_states[:,0,:] = transitions[:,0:self.input_length]
-            actions_to_read = self.input_length//read_step_length
-            # the "actions" contain all the applied forces during the measurements "total_length", i.e., # actions_to_read + 1.
-            actions = transitions[:,total_length:total_length+actions_to_read+1].cuda(non_blocking=True).unsqueeze(2)\
-                                                                   .expand(-1,-1,read_step_length) # the method "expand" does not copy
-            # the expanded "actions" tensor cannot be flattened about its the last two dims;
-            # however, we can change the view shapes of the "states" tensors to do the broadcasting
-            previous_states.view(self.batch_size,2,actions_to_read,read_step_length)[:,1,:,:] = actions[:,1:,:]
-            next_states.view(self.batch_size,2,actions_to_read,read_step_length)[:,1,:,:] = actions[:,:-1,:]
-        else:
-            transitions = transitions.cuda()
-            next_states = transitions[:, self.input_length:2*self.input_length]
-            previous_states = transitions[:, 0:self.input_length]
+        transitions = transitions.cuda()
+        next_states = transitions[:, self.input_length:2*self.input_length]
+        previous_states = transitions[:, 0:self.input_length]
         # start evaluation
         with torch.no_grad():
             _values, _means, noise = net(next_states)
             next_actions = _values.max(1)[1]
-        action_values, avg_value, _noise = net(previous_states, noise)
+        action_values, avg_value, _noise = net(previous_states, noise)#
         # dim=0 is sample dimension, while dim=1 at output is action dimension
         # call by index will reduce the number of dim by 1 at the called dimension
         state_action_values = action_values.gather(1, transitions[:,-2].cuda().unsqueeze(1).long()).squeeze() + avg_value - action_values.mean(dim=1)
         # rescale the rewards by (1-\gamma_r)
         rewards = (1-self.gamma)*transitions[:,-1].cuda()
-        # up to the above line, the use of data in array "transitions" is over, so it can be updated by
-        # the next batch data using a separate process to enhance the parallelization 
-        self.memory.request_sample(self.batch_size)
+        fail_mask = (transitions[:,-1]<=failing_reward).cuda()
 
-        next_action_values, next_avg_value, _noise = self.target_net(next_states, noise)
+        next_action_values, next_avg_value, _noise = self.target_net(next_states, noise)#
         next_state_values = next_action_values.gather(1, next_actions.unsqueeze(1)).squeeze() + next_avg_value - next_action_values.mean(dim=1)
         expected_state_action_values = (next_state_values * self.gamma) + rewards
+        expected_state_action_values[fail_mask] = transitions[:,-1][fail_mask]
+        # the use of data in array "transitions" is over, so it can be updated by
+        # the next batch data using a separate process to enhance the parallelization 
+        self.memory.request_sample(self.batch_size)
 
         unweighted_loss = F.mse_loss(state_action_values, expected_state_action_values, reduction='none')
         ISWeights = torch.from_numpy(ISWeights).to(unweighted_loss)
@@ -223,6 +208,7 @@ class TrainDQN(object):
             assert not np.isnan(self.accu_err), '"NAN" encountered in loss values. Numerical error has appeared.'
             print('RMS error {:.3g}\t'.format(math.sqrt(self.accu_err/self.report_i)), flush=True)
             self.clear_report()            
+        sys.stdout.flush()
         return loss.item()
 
 
@@ -486,16 +472,16 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
             loaded = True
         else: time.sleep(0.05)
     pause_event, end_event, learning_in_progress_event = shared_things
-    os.environ["NUMBA_NUM_THREADS"]="1"
+    os.environ["NUMBA_NUM_THREADS"]="1"; numerical_failure_count = 0; numerical_failure_episode_count = 0
     while not end_event.is_set():
         something_done = False
         last_episode = episode.value
         while not MemoryQueue.empty():
             # for each episode data put into the Queue:
             something_done = True; episode.value += 1
-            experience, t, avg_phonon = MemoryQueue.get()
+            experience, t, avg_phonon, Fail = MemoryQueue.get()
             num_of_sample = len(experience)
-            if num_of_sample==0 and not learning_in_progress_event.is_set(): learning_in_progress_event.set() 
+            if not args.train and not learning_in_progress_event.is_set(): learning_in_progress_event.set() 
             for i, array in enumerate(experience):
                 memory_in.store(array)
                 # This block may take a lot of time. We hope it can do the sampling used for training simultaneously.
@@ -518,8 +504,8 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
                     if t < t_max:
                         last_achieved_time.value = t
                     else:
-                        print('\nSet the counting of Episodes')
-                        episode.value = 1; failure_counter = 0
+                        print(colored('\nReset the counting of Episodes', 'yellow',attrs=['bold']))
+                        episode.value = 1; failure_counter = 0; numerical_failure_count = 0
                         last_achieved_time.value = t
                         last_episode = 1
                         learning_in_progress_event.set()
@@ -528,20 +514,30 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
                 # and if so, we reset the "last_achieved_time" and go back 
                 failure_counter += 1
                 # we customarily let the counter reset when 10 successive failures occur 
-                if failure_counter == 10: last_achieved_time.value = t; learning_in_progress_event.clear()
+                if failure_counter == 40: last_achieved_time.value = t; learning_in_progress_event.clear()
             elif failure_counter != 0: failure_counter = 0
 
-            if t != t_max: 
-                if last_achieved_time.value==t_max or episode.value%10==0:
-                    print('Episode {}\tt = {:.2f}'.format(episode.value, t))
-            else: print('Episode {}\tavg phonon = {:.5f}'.format(episode.value, avg_phonon), flush=True)
+            if t != t_max:
+                if Fail: numerical_failure_count = numerical_failure_count + 1
+                if (last_achieved_time.value==t_max and episode.value%2==0) or episode.value%10==0:
+                    Fail_reason = 'border error halt' if Fail else 'high energy halt'
+                    print('Episode {}\tt = {:.2f}\t{}'.format(episode.value, t, Fail_reason))
+            elif episode.value%2==0:
+                string = 'Episode {}\tavg energy = {:.5f}'.format(episode.value, avg_phonon)
+                if episode.value == 2: string += ' \t(t = 100)'
+                print(string, flush=True)
 
-            # We are not sure whether a pause functionality is really needed, and it is added only for consistency with other processes. We have never
-            # observed that the pause here can be triggered, and therefore, it has not been tested and there can be undiscovered bugs possibly.
+            if episode.value % 1000 == 0:
+                numerical_failure_episode_count += 1000
+                if numerical_failure_count != 0:
+                    print(colored('boundary numerical imprecision failure {}/{}'.format(numerical_failure_count, numerical_failure_episode_count), 'red'))
+                    numerical_failure_count = 0; numerical_failure_episode_count = 0
+
             if episode.value > last_episode + 50 and not pause: pause_event.set(); pause=True
 
             while not batch_update_queue.empty():
                 memory_in.batch_update(*batch_update_queue.get())
+            sys.stdout.flush()
         if pause and not pending_training_updates.value >= 30.: pause=False; pause_event.clear()
         while not batch_update_queue.empty():
             memory_in.batch_update(*batch_update_queue.get())
@@ -554,7 +550,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
             time.sleep(0.01); last_idle_time+=0.01 # if not something done, pause for 0.01 second
             # if this sleep time is too large (e.g. 0.2), it will become a bottleneck of the whole program because this is in the main loop.
             # Take care.
-        elif last_idle_time != 0. and time.time() - last_time > 40.: 
+        elif last_idle_time != 0. and time.time() - last_time > 50.: 
             print('loader pending for {:.1f} seconds out of {:.1f}'.format(last_idle_time, time.time() - last_time))
             last_idle_time = 0.
             last_time = time.time()

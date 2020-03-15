@@ -26,85 +26,54 @@ torch.set_num_threads(1) # this is for CPU usage
 if args.seed != -1: 
     random.seed(args.seed); torch.manual_seed(args.seed); np.random.seed(args.seed)
 
-args.omega = 1.
+lambda_=args.__dict__['lambda']*pi
+gamma = args.gamma*pi
+mass = args.mass/pi
+x_max, x_n = args.x_max, args.x_n
 
-
-################################### x space (for visulization)
-
-x_max = 14.; x_n = 250
-x = np.linspace(-x_max,x_max,x_n, dtype=np.float64)
-
-################################### x space end
-
-################################### wave function and energy
-
-
-omega = args.omega * pi # this is the energy multiplier for the phonon numbers,
-                        # in units of time^{-1} or \omega_c
-gamma = args.gamma * pi
-n_max = args.n_max
+# the global settgins are written in the file "space_def.py" as the output (dictionary) of the function "set_global"
+# this global definition strategy is not appreciated, but otherwise it would be annoyingly long
+import space_def
+globals().update({k:v for k,v in space_def.set_global(x_max = x_max, x_n_ = x_n, lambda_ = lambda_, mass = mass).items() if k not in globals()})
 
 def probability(state):
     return np.real(np.conj(state)*state)
 
-def common_factor_of_1Dharmonics(n):
-    return 1./np.sqrt(np.float128(repr(2**n))*np.float128(repr(factorial(n))))  *  sqrt(sqrt(1./pi)) * np.exp((-x*x/2).astype(np.float128))
-
-def adjust_n_max(new_n_max):
-    global n_max
-    n_max = new_n_max
-    global n_phonon
-    n_phonon=np.array([i for i in range(n_max+1)],dtype=np.float64)
-    global sqrt_n
-    sqrt_n = np.array([sqrt(i) for i in range(1,n_max+1)])
-    global annihilation, creation
-    annihilation=csr(np.diag(sqrt_n, k=1))
-    creation=csr(np.diag(sqrt_n, k=-1))
-    annihilation.prune(); creation.prune()
-    global x_hat, p_hat  ### we assume \hbar = m * \omega = 1
-    x_hat = sqrt(1/2)*(creation + annihilation)
-    p_hat = 1.j*sqrt(1/2)*(creation - annihilation)
-    x_hat.prune(); p_hat.prune()
-    global x_hat_2, p_hat_2, xp_px_hat
-    x_hat_2 = x_hat.dot(x_hat); p_hat_2 = np.real(p_hat.dot(p_hat))
-    xp_px_hat = x_hat.dot(p_hat)+p_hat.dot(x_hat)
-    x_hat_2.prune(); p_hat_2.prune(); xp_px_hat.prune()
-    global harmonic_Hamil
-    harmonic_Hamil = omega *np.diag(1/2 + n_phonon)
-    harmonic_Hamil = csr(harmonic_Hamil)
-    harmonic_Hamil.prune()
-    if __name__ == '__main__':
-        print('n_max adjusted to {}'.format(new_n_max))
-        global eigen_states
-        eigen_states=[]
-        for i in range(new_n_max + 1):
-            eigen_states.append(common_factor_of_1Dharmonics(i)*np.polynomial.hermite.hermval(x.astype(np.float128, order='C'), np.array([0. for j in range(i)]+[1.],dtype=np.float128)))
-        eigen_states=np.array(eigen_states).transpose().astype(np.float64, order='C')
-
-def normalize(vector):
-    p=linalg.norm(vector)
-    return vector / p
-
-def phonon_number(state):
-    return np.sum(probability(state)*n_phonon)
-
 def x_expct(state):
-    return np.real(np.conj(state).dot(x_hat.dot(state)))
+    return np.real(np.conj(state).dot(x*state))*grid_size
+
+def x_2_expct(state):
+    return np.real(np.conj(state).dot(x_2*state))*grid_size
+
+def kurtosis(state):
+    x_mean=x_expct(state)
+    relative_x = x-x_mean
+    relative_x_2=relative_x*relative_x
+    return np.real(np.conj(state).dot(relative_x_2*relative_x_2*state))*grid_size/(np.real(np.conj(state).dot(relative_x_2*state))*grid_size)**2 - 3
 
 def p_expct(state):
-    return np.real(np.conj(state).dot(p_hat.dot(state)))
+    return np.real(np.conj(state).dot(p_hat.dot(state)))*grid_size
+
+def xpx_expct(state):
+    return np.real(np.conj(state).dot(x*p_hat.dot(x*state)))*grid_size
 
 def expct(state, hermitian_operator):
-    return np.real(np.conj(state).dot(hermitian_operator.dot(state)))
+    return np.real(np.conj(state).dot(hermitian_operator.dot(state)))*grid_size
 
-def spatial_repr(state):
-    mask = np.abs(state) > 1e-4 # only values that are larger than this threshold are displayed
-    return eigen_states[:, :state.size][:, mask].dot(state[ mask ])
+def cal_energy(state, Hamiltonian):
+    return np.real(np.conj(state).dot(Hamiltonian.dot(state)))*grid_size
 
-if __name__ != '__main__':
-    adjust_n_max(n_max)
+def normalize(state, prob=None):
+    # norms of position components sum to one does not mean a proper dot product computation, 
+    # because integration on space involves a size of dx, which is grid_size dependent,
+    # or number of \psi position components dependent as the number of sampling.
+    # Here we take that integration involves a dx multiplier, an the space integration should be 1 as the normalization.
+    if type(prob) == type(None): p = linalg.norm(state)
+    else: p=sqrt(np.sum(prob))
+    return state / (p*sqrt(grid_size))
 
-################################### wave function and energy end
+def Gaussian_packet(wavelength, mean, std):
+    return np.exp(2.j*pi*(x-mean)/wavelength)*np.exp(-(x-mean)*(x-mean)/(4*std*std))/sqrt(sqrt(2*pi)*std)
 
 
 ################################## start learning setting, including some other settings not present in the commandline arguments
@@ -112,57 +81,35 @@ if __name__ != '__main__':
 half_period_steps = args.time_steps
 time_step = 1 / half_period_steps
 
-controls_per_half_period = args.n_con
-assert half_period_steps % controls_per_half_period == 0, 'We require that time_steps {} to be fully divided by the number of control steps n_con {}.'.format(args.time_steps, args.n_con)
-control_interval = round(half_period_steps / controls_per_half_period)
+controls_per_unit_time = args.n_con
+assert half_period_steps % controls_per_unit_time == 0, 'We require that time_steps {} to be fully divided by the number of control steps n_con {}.'.format(args.time_steps, args.n_con)
+control_interval = round(half_period_steps / controls_per_unit_time)
 
 num_of_episodes = args.num_of_episodes
 reward_multiply = args.reward_scale_up
-
+failing_reward = -(args.energy_cutoff)*reward_multiply
 
 t_max = 100.
 num_of_saves = 20
 
 
-# data input for the neural network
-def get_data_xp(state):
-    x_expc, p_expc = x_expct(state), p_expct(state)
-    return np.array([x_expc, p_expc, expct(state, x_hat_2)-x_expc**2, expct(state, p_hat_2)-p_expc**2, expct(state, xp_px_hat)/2-x_expc*p_expc]).astype(np.float32)
-
-def get_data_wavefunction(state):
-    # the last five values at the highest levels are supposed negligible and we do not include them as input data for AI
-    return np.hstack((np.real(state[:-10]),np.imag(state[:-10]))).astype(np.float32) 
-
 if args.input == 'xp':
-    data_size = 5
-    get_data = get_data_xp    # get_data is the function that returns the input data for AI given a quantum state
+    data_size = round((2+args.input_moment_order+1)*args.input_moment_order/2)
 elif args.input == 'wavefunction':
-    data_size = 2*(n_max+1-10)
-    get_data = get_data_wavefunction
-elif args.input == 'measurements':
-    n_periods_to_read = 1.5
-    num_of_data_per_time_unit = 360*4
-    assert half_period_steps % num_of_data_per_time_unit == 0, 'We require that time_steps {} to be fully divided by the 1440, which is the number of collected measurement outcomes per time 1.'.format(args.time_steps)
-    coarse_grain = half_period_steps//num_of_data_per_time_unit
-    read_length = round(n_periods_to_read * 2 * num_of_data_per_time_unit) # 3600
-    read_control_step_length = control_interval//coarse_grain
-    data_size = 2 * read_length
-    shape_measurement_data = (2, read_length)
-
+    data_size = 2*(x_n-10*2)
 
 
 # we do not plot when we do parallelized computation
 
 #import plot
 #plot.set_parameters(x=x, x_max=x_max, dt=time_step, num_of_episodes=num_of_episodes, probability=probability, 
-#    reward_multiply=reward_multiply, read_length=read_length, controls_per_half_period=controls_per_half_period)
+#    reward_multiply=reward_multiply, read_length=read_length, controls_per_unit_time=controls_per_unit_time)
 
 
 # set the reinforcement learning settings
 if __name__ == '__main__':
     import RL
-    RL.set_parameters(control_interval=control_interval, t_max=t_max, F_max=args.F_max)
-    if args.input == 'measurements': RL.set_parameters(read_step_length=read_control_step_length)
+    RL.set_parameters(control_interval=control_interval, t_max=t_max, F_max=args.F_max, failing_reward=failing_reward)
 
 ################################## end learning setting
 
@@ -172,42 +119,40 @@ if __name__ == '__main__':
 def Control(net, pipes, shared_buffer, seed, idx):
     simulation = __import__('simulation')
     # seeding
-    random.seed(seed)
-    np.random.seed(seed)
-    simulation.set_seed(seed)
+    random = np.random.RandomState(seed)
+    simulation.set_seed(random.randint(0,2**31 - 1))
     # preparing pipes
     MemoryQueue, ResultsQueue, ActionPipe, EndEvent, PauseEvent = pipes
     state_data_to_manager = np.frombuffer(shared_buffer,dtype='float32')
-    if args.input=='measurements': state_data_to_manager = state_data_to_manager.reshape(shape_measurement_data)
+    # data input for the neural network
+    def get_data_xp(state):
+        data = np.empty((data_size,))
+        simulation.get_moments(state, data)
+        return data.astype(np.float32) 
+    def get_data_wavefunction(state):
+        return np.hstack((np.real(state[10:-10]),np.imag(state[10:-10]))).astype(np.float32) 
+    if args.input == 'xp':
+        get_data = get_data_xp    # get_data is the function that returns the input data for AI given a quantum state
+    elif args.input == 'wavefunction':
+        get_data = get_data_wavefunction
+
     # random action decision hyperparameters
-    EPS_START = 0.05
-    EPS_END = 0.0002
-    EPS_DECAY = args.n_con*t_max*60
+    EPS_START = 0.2
+    EPS_END = 0.002
+    EPS_DECAY = args.n_con*t_max*80
     # initialization
     steps_done = 0
     no_action_choice = net.num_of_control_resolution_oneside
+    if __name__ != 'controllers' and args.control_strategy!='DQN':
+        import controllers 
     def call_force(data):
         nonlocal steps_done
-        # if LQG control is used, immediately return the LQG control without evaluating the neural network.
-        if args.LQG:
-            x=data[0]; p=data[1]
-            rnd = False
-            dt = 1./controls_per_half_period
-            force_max = net.convert_to_force(2*no_action_choice)
-            F = - ((x+p)+(p-x)*omega*dt)/dt
-            force = F / omega
-            force = min(force, force_max)
-            force = max(force, -force_max)
-            force = round(force/(force_max/no_action_choice))
-            force = float(force*(force_max/no_action_choice))
-            return force, round(force/(force_max/no_action_choice))+no_action_choice, False
-
         # apply an \epsilon-greedy strategy:
         eps_threshold = (EPS_START-EPS_END) * exp(-1. * steps_done / EPS_DECAY)
         eps_threshold += EPS_END
         steps_done += args.num_of_actors # this approximates the total steps_done of all the actors
-        if random.random() < eps_threshold and not args.test:
-            last_action=random.randrange(no_action_choice*2+1) 
+        if random.uniform() < eps_threshold and not args.test:
+            last_action=random.randint(no_action_choice*2+1) 
             rnd = True
         else:
             # copy data to 
@@ -218,85 +163,76 @@ def Control(net, pipes, shared_buffer, seed, idx):
             rnd = False
         force = net.convert_to_force(last_action)
         return force, last_action, rnd
+    def analytic_controls(state):
+        if args.control_strategy=='damping': F = controllers.steepest_descent(state, damping = args.con_parameter)
+        elif args.control_strategy=='LQG': F = controllers.LinearQuadratic(state, k = lambda_*args.con_parameter)
+        elif args.control_strategy=='semiclassical': F = controllers.Gaussian_approx(state)
+        force_max = net.convert_to_force(2*no_action_choice)
+        force = F / pi
+        force = min(force, force_max)
+        force = max(force, -force_max)
+        force = round(force/(force_max/no_action_choice))
+        force = float(force*(force_max/no_action_choice))
+        return force, round(force/(force_max/no_action_choice))+no_action_choice, False
+    def init_state():
+        wavenumber=random.uniform(-0.3,0.3)
+        if wavenumber == 0.: wavelength = float('inf')
+        else: wavelength = 1./wavenumber
+        state = Gaussian_packet(wavelength=wavelength, mean=0., std=1.)
+        t = 0.
+        init_time = random.uniform(15.,20.) # initialization time
+        while t < init_time: 
+            q, x_mean, Fail = simulation.step(state, time_step, 0., gamma)
+            t+=time_step
+        return state, Fail
     # do one episode
     def do_episode():
         t = 0.
-        to_stop = False
         # prepare the quantum state
-        state = np.zeros((n_max+1,), dtype=np.complex128)
-        state[0]=1.
-        # force is the parameter before -\omega\hat{x}, which is the physical force divided by an omega factor
+        state, init_Fail = init_state()
+        energy = cal_energy(state, Hamil)
+        # we retry until we get an initial state with a moderately small energy, i.e. smaller than 0.9 * args.energy_cutoff
+        while energy>=args.energy_cutoff*0.75 or init_Fail:
+            state, init_Fail = init_state()
+            energy = cal_energy(state, Hamil)
+        # force is the parameter before -\pi\hat{x}, which is the physical force divided by \pi
         force = 0.
         last_action = no_action_choice
         # start the simulation loop
         i = 0
         experience = []
-        accu_energy = 0.; accu_counter = 0
-        if args.input!='measurements':
-            last_data = get_data(state)*args.input_scaling
-            while not t >= t_max:
-                if i % control_interval == 0 and i != 0:
-                    phonon = phonon_number(state)
-                    if not to_stop and phonon <= args.phonon_cutoff:
-                        data = get_data(state)*args.input_scaling
-                        if args.train and i!=control_interval:
-                            experience.append(np.hstack(( last_data, data, 
-                                np.array([last_action],dtype=np.float32),  
-                                np.array([-(phonon)*reward_multiply],dtype=np.float32) )) )
-                    else: break
-                    if t>30:
-                        accu_energy += phonon_number(state); accu_counter += 1
-                    if (not args.LQG) or args.input=='xp':
-                        force, last_action, rnd = call_force(data) 
-                    else: force, last_action, rnd = call_force(get_data_xp(state))
-                    last_data = data
-                q, x_mean, Fail = simulation.step(state, time_step, force, gamma)
-                i += 1
-                # to_stop tiggers the stop when it attempts to store experience
-                if Fail and not to_stop : to_stop = True
-                t += time_step
-        # the organization of measurement data needs to be different:
-        else:
-            measurements_cache = []; measurements_input = list(np.zeros(read_length))
-            forces_along_measurements_input = list(np.zeros(read_length)); forces_to_store = list(np.zeros(read_length//read_control_step_length))
-            while not t >= t_max-0.01*time_step:
-                if i % control_interval == 0 and i != 0:
-                    phonon = phonon_number(state)
-                    if not to_stop and phonon <= args.phonon_cutoff:
-                        forces_to_store.append(force*args.input_scaling)
-                        # store the experience as a continuous measurement sequence connecting two neighbouring control steps
-                        if args.train and i!=control_interval: 
-                            experience.append(np.hstack(( np.array(measurements_input, dtype=np.float32)[::-1],
-                                np.array(forces_to_store, dtype=np.float32)[::-1],
-                                np.array([last_action], dtype=np.float32), 
-                                np.array([-(phonon)*reward_multiply],dtype=np.float32) )) )
-                    else: break
-                    if t>30-0.01*time_step: 
-                        accu_energy += phonon_number(state); accu_counter += 1
-                    # organise the lists to discard measurement data that belong to the most distant control step in the past
-                    measurements_input, forces_along_measurements_input = measurements_input[read_control_step_length:], forces_along_measurements_input[read_control_step_length:]
-                    forces_to_store = forces_to_store[1:]
-                    # use the organised measurement data to compute the next control
-                    if (not args.LQG):
-                        force, last_action, rnd = call_force([measurements_input[::-1], forces_along_measurements_input[::-1]])
-                    else: force, last_action, rnd = call_force(get_data_xp(state))
-                q, x_mean, Fail=simulation.step(state, time_step, force, gamma)
-                measurements_cache.append(q) 
-                if len(measurements_cache)==coarse_grain: 
-                    measurements_input.append(sum(measurements_cache)/coarse_grain*args.input_scaling)
-                    measurements_cache.clear()
-                    forces_along_measurements_input.append(force*args.input_scaling)
-                i += 1
-                # to_stop tiggers stop when it stores experience
-                if Fail and not to_stop : to_stop = True
-                t += time_step
+        accu_energy = 0.; accu_counter = 0; to_stop = False
+        while not t >= t_max-0.01*time_step:
+            if i % control_interval == 0:
+                energy = cal_energy(state, Hamil)
+                data = get_data(state)*args.input_scaling
+                if args.train and i != 0:
+                    if energy < args.energy_cutoff and not to_stop:
+                        experience.append(np.hstack(( last_data, data, 
+                            np.array([last_action],dtype=np.float32),  
+                            np.array([-energy*reward_multiply],dtype=np.float32) )) )
+                    else:
+                        break
+                        # We tried applying an "endpoint" Q value for the AI to learn when it fails. 
+                        # However, the strategy would significantly deteriorate the AI's final performance
+
+                if t>50-0.01*time_step: accu_energy += energy; accu_counter += 1
+                if args.control_strategy=='DQN':
+                    force, last_action, rnd = call_force(data) 
+                else: force, last_action, rnd = analytic_controls(state)
+                last_data = data
+            q, x_mean, Fail = simulation.step(state, time_step, force, gamma)
+            i += 1
+            # "Fail" immediately tiggers the stop
+            if Fail and not to_stop: to_stop = True
+            t += time_step
         # push experience into the main process and push results to the manager
         if t>= t_max-0.01*time_step: t=t_max
-        avg_phonon = accu_energy/accu_counter if t==t_max else args.phonon_cutoff
+        avg_energy = accu_energy/accu_counter if t==t_max else args.energy_cutoff
         if not EndEvent.is_set():
-            MemoryQueue.put( (experience, t, avg_phonon) )
-            ResultsQueue.put((t, avg_phonon))
-        return avg_phonon
+            MemoryQueue.put( (experience, t, avg_energy, to_stop) )
+            ResultsQueue.put((t, avg_energy))
+        return avg_energy
     while True:
         # whether to end the program
         if EndEvent.is_set():
@@ -322,6 +258,8 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
     torch.set_grad_enabled(False)
     # prepare the path
     if not os.path.isdir(args.folder_name): os.makedirs(args.folder_name, exist_ok=True)
+    if args.write_training_data:
+        if os.path.isfile(args.folder_name + '.txt'): os.remove(args.folder_name + '.txt')
     # prepare workers
     import multiprocessing as mp
     from multiprocessing.sharedctypes import RawArray
@@ -335,25 +273,23 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
         message_conn.append(conn1); message_worker_conn.append(conn2)
         shared_buffer = RawArray('f', data_size)
         np_memory = np.frombuffer(shared_buffer,dtype='float32')
-        if args.input=='measurements': 
-            np_memory=np_memory.reshape(shape_measurement_data)
         worker_data.append(torch.from_numpy(np_memory))
-        seed = random.randrange(0,99999)
+        seed = random.randrange(0,2**31 - 1)
         processes.append( fork.Process( target=Control, args=(copy.deepcopy(net).cpu(), (MemoryQueue, results_queue, conn2, EndEvent, PauseEvent), shared_buffer, seed, n) ) )
     net=net.cuda()
     net.eval()
     # prepare to save
-    good_actors=[(args.phonon_cutoff,0.) for i in range(num_of_saves)]
-    simulated_oscillations = 0.
+    good_actors=[(args.energy_cutoff/2.,0.) for i in range(num_of_saves)]
+    simulated_T = 0.
     performances = []
     episode_passed = 0
     # when receiving a net, check whether the previous net should be stored
     def receive_net():
-        if args.test or args.LQG:
+        if args.test or args.control_strategy!='DQN':
             if not results_queue.empty():
                 while not results_queue.empty():
                     result = results_queue.get()
-                    performances.append(result[1])
+                    if result[1]!=args.energy_cutoff: performances.append(result[1])
                     with open(os.path.join(args.folder_name, others+'_record.txt'),'a') as f:
                         f.write('{}\n'.format(result[1]))
             return
@@ -361,22 +297,22 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
         if ActorPipe.poll():
             nonlocal net
             if not results_queue.empty():
-                nonlocal episode_passed, simulated_oscillations
+                nonlocal episode_passed, simulated_T
                 while not results_queue.empty():
                     result = results_queue.get()
-                    simulated_oscillations += result[0]/2.
-                    performances.append(result[1]) # get the avg_phonon in the result tuple
+                    simulated_T += result[0]/2.
+                    performances.append(result[1]) # get the avg_energy in the result tuple
                     episode_passed += 1
                     if args.write_training_data:
                         with open(args.folder_name + '.txt','a') as f:
-                            f.write('{}, {}\n'.format(simulated_oscillations, result[1]))
+                            f.write('{}, {}\n'.format(simulated_T, result[1]))
                 # only if 50 additional episodes have passed, do we consider saving the next model
-                if episode_passed > 50 and len(performances) >= 9: 
-                    new_avg_phonon = np.mean(np.array(performances[-10:]))
-                    if new_avg_phonon < good_actors[-1][0]:
-                        good_actors[-1] = (new_avg_phonon, copy.deepcopy(net).cpu())
+                if episode_passed > 50 and len(performances) >= 8: 
+                    new_avg_energy = np.mean(np.array(performances[-8:]))
+                    if new_avg_energy < good_actors[-1][0]:
+                        good_actors[-1] = (new_avg_energy, copy.deepcopy(net).cpu())
                         good_actors.sort(key=lambda p: p[0], reverse=False) # sort in increasing order; "reverse" is False, in fact unnecessary
-                        print(colored('new avg phonon record: {:.5f}'.format(new_avg_phonon), 'green',attrs=['bold']))
+                        print(colored('new avg energy record: {:.5f}'.format(new_avg_energy), 'green',attrs=['bold']))
                         for idx, actor in enumerate(good_actors):
                             if type(actor[1]) != float:
                                 torch.save(actor[1].state_dict(), os.path.join(args.folder_name,'{}.pth'.format(idx+1)))
@@ -391,9 +327,7 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
             net.eval()
             if args.show_actor_recv: print(colored('new model received', 'yellow'))
 
-    if args.input != 'measurements':
-        network_input = torch.empty((num_of_processes,data_size), device='cuda')
-    else: network_input = torch.empty((num_of_processes,2,read_length), device='cuda')
+    network_input = torch.empty((num_of_processes,data_size), device='cuda')
 
     for proc in processes:
         proc.start()
@@ -406,8 +340,8 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
             if message_conn[i].poll():
                 idx=message_conn[i].recv()
                 if idx!=None:
-                    data_received_id.append(idx) # the data sent through pipe is exactly the id
-                    network_input[num_of_data]=worker_data[i]
+                    data_received_id.append(i) # the data sent through pipe is exactly the id
+                    network_input[num_of_data]=worker_data[i][:]
                     num_of_data += 1
                 else: process_ended += 1
 
@@ -417,16 +351,16 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
         # process the received data
         if num_of_data == 0:
             time.sleep(0.0005) # if no data, wait for 0.5 milisecond
-            if args.LQG: time.sleep(1.)
+            if args.control_strategy!='DQN': time.sleep(1.)
         else:
-            action_values, avg_value, _noise = net(network_input[:num_of_data,:])
+            action_values, avg_value, _noise = net(network_input[:num_of_data])
             actions = action_values.max(1)[1].cpu()
             for i,idx in enumerate(data_received_id):
                 message_conn[idx].send(actions[i].item())
         # update the network
         receive_net()
     # end, if have left the while loop
-    if args.test or args.LQG:
+    if args.test or args.control_strategy!='DQN':
         with open(os.path.join(args.folder_name, others+'.txt'),'w') as f:
             performances = np.array(performances)
             f.write('{} +- {}\n'.format(np.mean(performances), np.std(performances, ddof=1)/np.sqrt(len(performances)) ))
@@ -465,6 +399,7 @@ if __name__ == '__main__':
             # somehow RawValue also needs us to call ".value" ? Otherwise it says the type is c_double / c_int
             self.train.memory.set_memory_source(self.MemoryInputQueue, (self.pause_event, self.end_event, self.learning_in_progress_event))
             self.backup_period = self.train.backup_period
+            self.train.backup_period = 100
         def __call__(self, num_of_episodes):
             started = False
             self.worker_manager.start()
@@ -496,14 +431,14 @@ if __name__ == '__main__':
                     self.pause_event.clear()
                 if self.t_done.value >= self.actor_update_time:
                     self.scale_up_actor_update_time(self.last_achieved_time.value)
-                    if not self.ActorReceivePipe.poll() and started and not args.LQG:
+                    if not self.ActorReceivePipe.poll() and started and args.control_strategy=='DQN':
                         self.ActorUpdatePipe.send(self.train.net.state_dict())
                         with self.t_done.get_lock():
                             self.t_done.value = 0.
                         something_done = True
                 if something_done:
                     # print out how much time the training process has been idle for
-                    if last_idle_time != 0. and time.time() - last_time > 40.: 
+                    if last_idle_time != 0. and time.time() - last_time > 50.: 
                         print('trainer pending for {:.1f} seconds out of {:.1f}'.format(last_idle_time, time.time() - last_time))
                         last_idle_time = 0.
                         last_time = time.time()
@@ -516,15 +451,15 @@ if __name__ == '__main__':
         def scale_up_actor_update_time(self, achieved_time):
             changed = False
             if achieved_time>80. and self.actor_update_time<=150.:
-                self.actor_update_time = 1000.; changed = True
-            elif achieved_time>20. and self.actor_update_time<=50.:
-                self.actor_update_time = 150.; changed = True
+                self.actor_update_time = 800.; changed = True
             elif achieved_time>10. and self.actor_update_time<=25.:
                 self.actor_update_time = 50.; changed = True
             elif achieved_time>5. and self.actor_update_time<=10.:
                 self.actor_update_time = 25.; changed = True
             if changed and args.train: print('actor_update_time adjusted to {:.1f}'.format(self.actor_update_time))
         def adjust_learning_rate(self):
+            if self.train.backup_period != self.backup_period and self.learning_in_progress_event.is_set():
+                self.train.backup_period = self.backup_period
             # the learning rate schedule is written in "arguments.py"
             if self.episode.value > args.lr_schedule[self.lr_step][0] and self.last_achieved_time.value == t_max:
                 args.lr = min(args.lr_schedule[self.lr_step][1], args.lr)
@@ -537,22 +472,32 @@ if __name__ == '__main__':
 
     # system settings, checks and the framework
     def check_C_module_and_compile():
-        if args.compile == False:
+        if not args.compile:
             try:
                 simulation = __import__('simulation')
-                (compiled_n_max, compiled_omega) = simulation.check_settings()
-                if compiled_n_max != n_max:
-                    print(colored('N_MAX of the existing C module ({}) does not match the current task ({}). Recompile.\n'.format(compiled_n_max, n_max), 'yellow',attrs=['bold']))
-                    time.sleep(1)
+                (c_x_n, c_grid_size, c_lambda, c_mass, c_moment) = simulation.check_settings()
+                default_str = ' of the existing C module ({}) does not match the current task ({}). Recompile.\n'
+                if c_x_n != x_n:
+                    print(colored(('X_N'+default_str).format(c_x_n, x_n), 'yellow',attrs=['bold']))
                     args.compile = True
-                elif compiled_omega != omega:
-                    print(colored('\omega of the existing C module ({}) does not match the current task ({}). Recompile.\n'.format(compiled_omega, omega), 'yellow',attrs=['bold']))
-                    time.sleep(1)
+                elif c_grid_size != grid_size:
+                    print(colored(('Grid_size'+default_str).format(c_grid_size, grid_size), 'yellow',attrs=['bold']))
+                    args.compile = True
+                elif c_lambda != lambda_:
+                    print(colored(('\lambda'+default_str).format(c_lambda, lambda_), 'yellow',attrs=['bold']))
+                    args.compile = True
+                elif c_mass != mass:
+                    print(colored(('Mass'+default_str).format(c_mass, mass), 'yellow',attrs=['bold']))
+                    args.compile = True
+                elif c_moment != args.input_moment_order:
+                    print(colored(('Input distribution moment order'+default_str).format(c_moment, args.input_moment_order), 'yellow',attrs=['bold']))
                     args.compile = True
             except (ModuleNotFoundError, AttributeError) as e:
                 args.compile = True
-        if args.compile == True:
-            code=os.system('python{} setupC.py --n_max {} --omega {} --gamma {}'.format(sys.version[:3], n_max, omega, gamma))
+            if args.compile: time.sleep(1)
+        if args.compile:
+            code = os.system('python{} setupC.py --x_max {} --grid_size {} --lambda {} --mass {} --moment {}'.format(sys.version[:3],
+                           x_max,grid_size,lambda_,mass,args.input_moment_order))
             if code != 0:
                 raise RuntimeError('Compilation Failure')
 
@@ -566,23 +511,22 @@ if __name__ == '__main__':
     check_C_module_and_compile()
 
     # set the replay memory
-    capacity = round(args.size_of_replay_memory*controls_per_half_period*t_max) if args.train else 1
-    memory = RL.Memory(capacity = capacity, data_size = data_size * 2 + 2 if args.input != 'measurements' else \
-                                            (read_control_step_length+read_length) + read_length//read_control_step_length+1 + 2,
-                                            policy = 'random', passes_before_random = 0.2)
+    capacity = round(args.size_of_replay_memory*controls_per_unit_time*t_max) if args.train else 1
+    memory = RL.Memory(capacity = capacity, data_size = data_size * 2 + 2, policy = 'random', passes_before_random = 0.2)
     # define the neural network
-    net = RL.direct_DQN(data_size).cuda() if args.input != 'measurements' else RL.DQN_measurement(read_length)
+    net = RL.direct_DQN(data_size).cuda()
     # set the task
-    if args.train or args.LQG:
+    if args.train or args.control_strategy!='DQN':
         train = RL.TrainDQN(net, memory, batch_size = args.batch_size, gamma=0.99, backup_period = args.target_network_update_interval, args=args)
         del net
         # the main function of training
         if args.train: 
             main = Main_System(train, num_of_processes=args.num_of_actors)
             main(num_of_episodes)
-        # when we do not train and we test the result of LQG
-        elif args.LQG: 
-            main = Main_System(train, num_of_processes=args.num_of_actors, others='LQG')
+        # when we do not train and we test the result of analytic strategies
+        elif args.control_strategy!='DQN': 
+            string = args.control_strategy if args.control_strategy=='semiclassical' else args.control_strategy+str(args.con_parameter)
+            main = Main_System(train, num_of_processes=args.num_of_actors, others=string)
             main(args.num_of_test_episodes)
     # if we test existing models, we use a loop to iterate over the models
     else:
