@@ -57,6 +57,8 @@ parser.add_argument('--num_of_actors', default = 10, type=int,
                     help='the number of actors, i.e. the number of working processes that repeatedly do the control to accumulate experiences.')
 parser.add_argument('--show_actor_recv', action='store_true',
                     help='to signify when a new model is received by the actors during training')
+parser.add_argument('--num_of_saves', default = 20, type=int,
+                    help='the number of models to save. Models with higher training performances are saved in order.')
 parser.add_argument('--write_training_data', action = 'store_true',
                     help='whether to store the data that are used to plot training curves')
 

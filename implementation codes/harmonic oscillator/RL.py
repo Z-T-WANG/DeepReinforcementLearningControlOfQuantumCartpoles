@@ -391,7 +391,7 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
         # it is strange that a parent process can manage the data passing between recver and sender in itself correctly,
         # but if the recver and sender are both passed to a subprocess, it no longer works there.
         # **********
-        self.loader = ctx.Process(target=Load, args=(conn_recver, shared_data, transitions_sampling_memory, array_shape, self.batch_update_queue, self.inputs, self.tree, (sampling_queue, conn3)))
+        self.loader = ctx.Process(target=Load, args=(conn_recver, shared_data, transitions_sampling_memory, array_shape, self.batch_update_queue, self.inputs, self.tree, (sampling_queue, conn3), random.randrange(0,2**32-1)))
         self.sampling_recv = sampling_queue
         self.sampling_request = conn4
         self.sampling_request_recv_head = conn3
@@ -470,7 +470,8 @@ def compiled_batch_update(tree_idx,clipped_errors,alpha,tree):
     for ti, p in zip(tree_idx, ps):
         compiled_update(ti, p, tree)
 
-def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch_update_queue, inputs, tree_data, sampling_conns):
+def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch_update_queue, inputs, tree_data, sampling_conns, seed):
+    random.seed(seed); np.random.seed(seed)
     memory_in = Memory(**inputs, data_tree=tree_data)
     memory_in.set_transition_sampling_storage(\
                     np.frombuffer(Transitions_Sampling_Memory,dtype='float32').reshape(Memory_Shape))

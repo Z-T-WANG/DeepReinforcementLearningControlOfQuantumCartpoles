@@ -33,6 +33,8 @@ parser.add_argument('--con_parameter', default = 0.9, type=float,
                     help='an additional undetermined control parameter for applying the damping or LQG control')
 parser.add_argument('--test', action='store_true',
                     help='whether to test existing trained models rather than to train')
+parser.add_argument('--test_energy_cutoff', default = 100., type=float,
+                    help='the maximum energy we allow during testing')
 parser.add_argument('--load_dir', default='', type=str,
                     help='the directory of models to test')
 parser.add_argument('--num_of_test_episodes', default=300, type=int,
@@ -52,11 +54,11 @@ parser.add_argument('--size_of_replay_memory', default = 5000, type=int,
 parser.add_argument('--target_network_update_interval', default = 300, type=int,
                     help='the number of performed gradient descent steps before updating the target network. \nThe target network is a lazy copy of the currently trained network, i.e., it is updated to the current network only after sufficiently many gradient descent steps are done. It is used in DQN training to provide a more stable evaluation of the current Q value. The number of the gradient descent steps is this "target_network_update_interval" parameter.')
 parser.add_argument('--train_episodes_multiplicative', default = 1., type=float,
-                    help=r'the multiplicative factor that rescales the default number of simulated episodes (10000), each of time 100, i.e. \frac{100}{\omega_c}. The counting of episodes will be reset to 1 when the controller achieves time 100 for the first time, so it corresponds to the number of episodes after learning has started. This rescaling factor also rescales the learning rate schedule.')
+                    help=r'the multiplicative factor that rescales the default number of simulated episodes (11000), each of time 100, i.e. \frac{100}{\omega_c}. The counting of episodes will be reset to 1 when the controller achieves time 100 for the first time, so it corresponds to the number of episodes after learning has started. This rescaling factor also rescales the learning rate schedule.')
 parser.add_argument('--maximum_trails_before_giveup', default = 20000, type=int,
                     help=r'the maximal number of simulated episodes when the learning does not proceed. If the simulated episodes exceed this value, we give up training.')
-parser.add_argument('--init_lr', default = 4e-4, type=float,
-                    help='the initial learning rate. The learning rate will be decayed to 4e-5 at episode 1000, 8e-6 at 3000, 2e-6 at 5000, 4e-7 at 6500 and 1e-7 at 8000 when the current learning rate is higher.')
+parser.add_argument('--init_lr', default = 1e-3, type=float,
+                    help='the initial learning rate. The learning rate will be decayed to 1e-3 when the learning becomes in progress, to 4e-4 at episode 1000,  to 8e-5 at 2000, to 2e-5 at 5000, 4e-6 at 7000, 8e-7 at 8500 and 2e-7 at 10000 if the current learning rate is higher.')
 parser.add_argument('--reward_scale_up', default = 1., type=float,
                     help='a multiplicative factor of the reward for the AI')
 parser.add_argument('--input_scaling', default = 1., type=float,
@@ -65,6 +67,8 @@ parser.add_argument('--num_of_actors', default = 30, type=int,
                     help='the number of actors, i.e. the number of working processes that repeatedly do the control to accumulate experiences.')
 parser.add_argument('--show_actor_recv', action='store_true',
                     help='to signify when a new model is received by the actors during training')
+parser.add_argument('--num_of_saves', default = 20, type=int,
+                    help='the number of models to save. Models with higher training performances are saved in order.')
 parser.add_argument('--write_training_data', action = 'store_true',
                     help='whether to store the data that are used to plot training curves')
 
@@ -81,7 +85,7 @@ args.x_n = num_of_discrete*2+1
 args.x_max = num_of_discrete*args.grid_size
 
 args.num_of_episodes = round(11000*args.train_episodes_multiplicative)
-args.lr_schedule = [(round(t[0]*args.train_episodes_multiplicative) if t[0]!=float('inf') else t[0], t[1]) for t in [(2000,8e-5), (5000,2e-5), (7000,4e-6), (8500,8e-7), (10000,2e-7), (11000, 0.)]]
+args.lr_schedule = [(round(t[0]*args.train_episodes_multiplicative) if t[0]!=float('inf') else t[0], t[1]) for t in [(1000,4e-4), (2000,8e-5), (5000,2e-5), (7000,4e-6), (8500,8e-7), (10000,2e-7), (11000, 0.)]]
 # set the default learning rate
 args.lr = args.init_lr
 
@@ -89,6 +93,8 @@ args.lr = args.init_lr
 if args.test: args.train = False
 elif args.control_strategy!='DQN': args.train = False
 else: args.train = True
+
+assert args.__dict__['lambda']>=0, "The \lambda coefficient should be positive to define the quartic oscillator."
 
 # prepare the path name
 args.folder_name = '{}Input_lm{}_ga{}'.format(args.input, args.__dict__['lambda'], args.gamma) if args.save_dir == '' else args.save_dir

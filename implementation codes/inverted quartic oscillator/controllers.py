@@ -17,7 +17,7 @@ def LinearQuadratic(state, k):
     # k is the Quadratic loss of the controller
     x_expc, p_expc, x3_expc, xpx_expc = x_expct(state), p_expct(state), np.real(np.conj(state).dot(x**3 * state))*grid_size, xpx_expct(state)
     x_predicted, p_predicted = x_expc+p_expc/mass*control_time-control_time**2 *2.*lambda_*x3_expc/mass, p_expc-4.*lambda_*x3_expc*control_time-control_time**2 *2.*lambda_*3.*xpx_expc/mass
-    return -(sqrt(k*mass)*x_predicted+p_predicted)/control_time
+    return -(sqrt(abs(k)*mass)*x_predicted+p_predicted)/control_time
 
 def Gaussian_approx(state):
     x_expc, p_expc, x3_expc, xpx_expc = x_expct(state), p_expct(state), np.real(np.conj(state).dot(x**3 * state))*grid_size, xpx_expct(state)

@@ -88,6 +88,8 @@ if args.test: args.train = False
 elif args.LQG: args.train = False
 else: args.train = True
 
+
+
 # prepare the path name
 args.folder_name = '{}Input_om{}_ga{}'.format(args.input, args.omega, args.gamma) if args.save_dir == '' else args.save_dir
 if args.test:

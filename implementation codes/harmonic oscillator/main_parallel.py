@@ -121,7 +121,7 @@ reward_multiply = args.reward_scale_up
 
 
 t_max = 100.
-num_of_saves = 20
+num_of_saves = args.num_of_saves
 
 
 # data input for the neural network
@@ -179,6 +179,8 @@ def Control(net, pipes, shared_buffer, seed, idx):
     MemoryQueue, ResultsQueue, ActionPipe, EndEvent, PauseEvent = pipes
     state_data_to_manager = np.frombuffer(shared_buffer,dtype='float32')
     if args.input=='measurements': state_data_to_manager = state_data_to_manager.reshape(shape_measurement_data)
+    if args.write_training_data and args.train:
+        if os.path.isfile(args.folder_name + '.txt'): os.remove(args.folder_name + '.txt')
     # random action decision hyperparameters
     EPS_START = 0.05
     EPS_END = 0.0002
@@ -591,11 +593,12 @@ if __name__ == '__main__':
         test_nets = []
         for name in glob.glob(os.path.join(args.folder_name,'*')):
             file_name, ext = os.path.splitext(os.path.basename(name))
-            if ext=='.pth' or ext=='': test_nets.append((file_name, torch.load(name)))
+            if (ext=='.pth' or ext=='') and os.path.isfile(name): test_nets.append((file_name, torch.load(name)))
         assert len(test_nets)!=0, 'No model found to test'
         # for each model we run the main loop once
         for test_net in test_nets:
-            net.load_state_dict(test_net[1])
+            if test_net[1].__class__ == RL.direct_DQN: net.load_state_dict(test_net[1].state_dict())
+            else: net.load_state_dict(test_net[1])
             train = RL.TrainDQN(net, memory, batch_size = args.batch_size, gamma=0.99, backup_period = args.target_network_update_interval, args=args)
             main = Main_System(train, num_of_processes=args.num_of_actors, others=test_net[0])
             main(args.num_of_test_episodes)

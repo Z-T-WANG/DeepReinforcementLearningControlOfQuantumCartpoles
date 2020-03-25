@@ -337,6 +337,8 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
     torch.set_grad_enabled(False)
     # prepare the path
     if not os.path.isdir(args.folder_name): os.makedirs(args.folder_name, exist_ok=True)
+    if args.write_training_data and args.train:
+        if os.path.isfile(args.folder_name + '.txt'): os.remove(args.folder_name + '.txt')
     # prepare workers
     import multiprocessing as mp
     from multiprocessing.sharedctypes import RawArray
@@ -385,7 +387,7 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
                     if args.write_training_data:
                         with open(args.folder_name + '.txt','a') as f:
                             f.write('{}, {}\n'.format(simulated_oscillations, result[0]))
-                # if 300 additional episodes have passed, we save the next model
+                # if args.save_interval additional episodes have passed, we save the next model
                 if episode_passed >= args.save_interval:
                     nonlocal save_models
                     save_models.append(copy.deepcopy(net.state_dict()))
@@ -610,7 +612,7 @@ if __name__ == '__main__':
         test_nets = []
         for name in glob.glob(os.path.join(args.folder_name,'*')):
             file_name, ext = os.path.splitext(os.path.basename(name))
-            if ext=='.pth' or ext=='': test_nets.append((file_name, torch.load(name)))
+            if (ext=='.pth' or ext=='') and os.path.isfile(name): test_nets.append((file_name, torch.load(name)))
         assert len(test_nets)!=0, 'No model found to test'
         # for each model we run the main loop once
         for test_net in test_nets:

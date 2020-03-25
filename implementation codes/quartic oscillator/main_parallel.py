@@ -90,7 +90,7 @@ reward_multiply = args.reward_scale_up
 failing_reward = -(args.energy_cutoff)*reward_multiply
 
 t_max = 100.
-num_of_saves = 20
+num_of_saves = args.num_of_saves
 
 
 if args.input == 'xp':
@@ -138,7 +138,7 @@ def Control(net, pipes, shared_buffer, seed, idx):
 
     # random action decision hyperparameters
     EPS_START = 0.2
-    EPS_END = 0.002
+    EPS_END = 0.004
     EPS_DECAY = args.n_con*t_max*80
     # initialization
     steps_done = 0
@@ -185,6 +185,7 @@ def Control(net, pipes, shared_buffer, seed, idx):
             q, x_mean, Fail = simulation.step(state, time_step, 0., gamma)
             t+=time_step
         return state, Fail
+    init_energy_cutoff = 7.5
     # do one episode
     def do_episode():
         t = 0.
@@ -192,7 +193,7 @@ def Control(net, pipes, shared_buffer, seed, idx):
         state, init_Fail = init_state()
         energy = cal_energy(state, Hamil)
         # we retry until we get an initial state with a moderately small energy, i.e. smaller than 0.9 * args.energy_cutoff
-        while energy>=args.energy_cutoff*0.75 or init_Fail:
+        while energy>=init_energy_cutoff or init_Fail:
             state, init_Fail = init_state()
             energy = cal_energy(state, Hamil)
         # force is the parameter before -\pi\hat{x}, which is the physical force divided by \pi
@@ -202,19 +203,20 @@ def Control(net, pipes, shared_buffer, seed, idx):
         i = 0
         experience = []
         accu_energy = 0.; accu_counter = 0; to_stop = False
+        energy_cutoff = args.energy_cutoff if args.train else args.test_energy_cutoff
         while not t >= t_max-0.01*time_step:
             if i % control_interval == 0:
                 energy = cal_energy(state, Hamil)
                 data = get_data(state)*args.input_scaling
-                if args.train and i != 0:
-                    if energy < args.energy_cutoff and not to_stop:
+                if energy < energy_cutoff and not to_stop:
+                    if args.train and i != 0:
                         experience.append(np.hstack(( last_data, data, 
                             np.array([last_action],dtype=np.float32),  
                             np.array([-energy*reward_multiply],dtype=np.float32) )) )
-                    else:
-                        break
-                        # We tried applying an "endpoint" Q value for the AI to learn when it fails. 
-                        # However, the strategy would significantly deteriorate the AI's final performance
+                else:
+                    break
+                    # We tried applying an "endpoint" Q value for the AI to learn when it fails. 
+                    # However, the strategy would significantly deteriorate the AI's final performance
 
                 if t>50-0.01*time_step: accu_energy += energy; accu_counter += 1
                 if args.control_strategy=='DQN':
@@ -223,12 +225,11 @@ def Control(net, pipes, shared_buffer, seed, idx):
                 last_data = data
             q, x_mean, Fail = simulation.step(state, time_step, force, gamma)
             i += 1
-            # "Fail" immediately tiggers the stop
             if Fail and not to_stop: to_stop = True
             t += time_step
         # push experience into the main process and push results to the manager
         if t>= t_max-0.01*time_step: t=t_max
-        avg_energy = accu_energy/accu_counter if t==t_max else args.energy_cutoff
+        avg_energy = accu_energy/accu_counter if t==t_max else energy_cutoff
         if not EndEvent.is_set():
             MemoryQueue.put( (experience, t, avg_energy, to_stop) )
             ResultsQueue.put((t, avg_energy))
@@ -258,7 +259,7 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
     torch.set_grad_enabled(False)
     # prepare the path
     if not os.path.isdir(args.folder_name): os.makedirs(args.folder_name, exist_ok=True)
-    if args.write_training_data:
+    if args.write_training_data and args.train:
         if os.path.isfile(args.folder_name + '.txt'): os.remove(args.folder_name + '.txt')
     # prepare workers
     import multiprocessing as mp
@@ -289,7 +290,7 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
             if not results_queue.empty():
                 while not results_queue.empty():
                     result = results_queue.get()
-                    if result[1]!=args.energy_cutoff: performances.append(result[1])
+                    performances.append(result[1])
                     with open(os.path.join(args.folder_name, others+'_record.txt'),'a') as f:
                         f.write('{}\n'.format(result[1]))
             return
@@ -460,13 +461,19 @@ if __name__ == '__main__':
         def adjust_learning_rate(self):
             if self.train.backup_period != self.backup_period and self.learning_in_progress_event.is_set():
                 self.train.backup_period = self.backup_period
+                if 1.e-3 < args.lr:
+                    args.lr = min(1.e-3, args.lr)
+                    if args.train:
+                        for param_group in self.train.optim.param_groups: param_group['lr'] = args.lr
+                        print(colored('learning rate set to {:.2g}'.format(args.lr),attrs=['bold']))
             # the learning rate schedule is written in "arguments.py"
             if self.episode.value > args.lr_schedule[self.lr_step][0] and self.last_achieved_time.value == t_max:
-                args.lr = min(args.lr_schedule[self.lr_step][1], args.lr)
+                if args.lr_schedule[self.lr_step][1] < args.lr:
+                    args.lr = min(args.lr_schedule[self.lr_step][1], args.lr)
+                    if args.train:
+                        for param_group in self.train.optim.param_groups: param_group['lr'] = args.lr
+                        print(colored('learning rate set to {:.2g}'.format(args.lr),attrs=['bold']))
                 self.lr_step += 1
-                if args.train:
-                    for param_group in self.train.optim.param_groups: param_group['lr'] = args.lr
-                    print(colored('learning rate set to {:.2g}'.format(args.lr),attrs=['bold']))
 
 
 
@@ -535,7 +542,7 @@ if __name__ == '__main__':
         test_nets = []
         for name in glob.glob(os.path.join(args.folder_name,'*')):
             file_name, ext = os.path.splitext(os.path.basename(name))
-            if ext=='.pth' or ext=='': test_nets.append((file_name, torch.load(name)))
+            if (ext=='.pth' or ext=='') and os.path.isfile(name): test_nets.append((file_name, torch.load(name)))
         assert len(test_nets)!=0, 'No model found to test'
         # for each model we run the main loop once
         for test_net in test_nets:

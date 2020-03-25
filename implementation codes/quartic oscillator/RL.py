@@ -85,12 +85,12 @@ class direct_DQN(nn.Module):
         super(direct_DQN, self).__init__()
         self.inputs={'data_length':data_length, 'noisy_layers':noisy_layers}
         self.fc1=layers.Linear_weight_normalize(data_length, 512)
-        self.fc2=layers.Linear_weight_normalize(512, 256)
+        self.fc2=layers.Linear_weight_normalize(512, 512)
         if noisy_layers >= 2:
-            self.fc31=layers.FactorizedNoisy(256, 256)
+            self.fc31=layers.FactorizedNoisy(512, 256)
         else:
-            self.fc31=layers.Linear_weight_normalize(256, 256)
-        self.fc32=layers.Linear_weight_normalize(256, 128)
+            self.fc31=layers.Linear_weight_normalize(512, 256)
+        self.fc32=layers.Linear_weight_normalize(512, 128)
         if noisy_layers >= 1:
             self.fc41=layers.FactorizedNoisy(256, self.num_of_control_resolution_oneside*2 + 1) # left and right, and 1 extra for no control
         else:
@@ -350,8 +350,8 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
     This Memory class is modified based on the original code from:
     https://github.com/jaara/AI-blog/blob/master/Seaquest-DDQN-PER.py
     """
-    epsilon = 0.001  # small amount to avoid zero priority
-    alpha = 0.3  # [0~1] convert the importance of TD error to priority
+    epsilon = 0.0001  # small amount to avoid zero priority
+    alpha = 0.2  # [0~1] convert the importance of TD error to priority
     beta = 0.2  # importance-sampling, from initial value increasing to 1
     beta_increment_per_sampling = 0.001
     abs_err_upper = 10.  # clipped abs error
@@ -377,7 +377,7 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
         # it is strange that a parent process can manage the data passing between recver and sender in itself correctly,
         # but if the recver and sender are both passed to a subprocess, it no longer works there.
         # **********
-        self.loader = ctx.Process(target=Load, args=(conn_recver, shared_data, transitions_sampling_memory, array_shape, self.batch_update_queue, self.inputs, self.tree, (sampling_queue, conn3)))
+        self.loader = ctx.Process(target=Load, args=(conn_recver, shared_data, transitions_sampling_memory, array_shape, self.batch_update_queue, self.inputs, self.tree, (sampling_queue, conn3), random.randrange(0,2**32-1)))
         self.sampling_recv = sampling_queue
         self.sampling_request = conn4
         self.sampling_request_recv_head = conn3
@@ -421,7 +421,7 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
         if hasattr(self,'batch_update_queue'):
             self.batch_update_queue.put((tree_idx, abs_errors))
             return
-        self.epsilon = 0.001 * self.max
+        self.epsilon = 0.0001 * self.max
         abs_errors += self.epsilon  # convert to abs and avoid 0
         clipped_errors = np.minimum(abs_errors, self.abs_err_upper)
         compiled_batch_update(tree_idx,clipped_errors,self.alpha,self.tree.tree)
@@ -456,7 +456,8 @@ def compiled_batch_update(tree_idx,clipped_errors,alpha,tree):
     for ti, p in zip(tree_idx, ps):
         compiled_update(ti, p, tree)
 
-def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch_update_queue, inputs, tree_data, sampling_conns):
+def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch_update_queue, inputs, tree_data, sampling_conns, seed):
+    random.seed(seed); np.random.seed(seed)
     memory_in = Memory(**inputs, data_tree=tree_data)
     memory_in.set_transition_sampling_storage(\
                     np.frombuffer(Transitions_Sampling_Memory,dtype='float32').reshape(Memory_Shape))
@@ -481,7 +482,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
             something_done = True; episode.value += 1
             experience, t, avg_phonon, Fail = MemoryQueue.get()
             num_of_sample = len(experience)
-            if not args.train and not learning_in_progress_event.is_set(): learning_in_progress_event.set() 
+            if not args.train and not learning_in_progress_event.is_set(): learning_in_progress_event.set()
             for i, array in enumerate(experience):
                 memory_in.store(array)
                 # This block may take a lot of time. We hope it can do the sampling used for training simultaneously.

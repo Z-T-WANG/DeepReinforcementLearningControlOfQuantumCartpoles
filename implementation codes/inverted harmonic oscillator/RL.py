@@ -11,7 +11,8 @@ from multiprocessing.sharedctypes import Value, RawValue, RawArray
 import multiprocessing as mp
 import time, random
 from termcolor import colored
-import os
+import os, sys
+from arguments import args
 
 F_max = 8.
 def set_parameters(**kwargs):
@@ -394,7 +395,7 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
         # it is strange that a parent process can manage the data passing between recver and sender in itself correctly,
         # but if the recver and sender are both passed to a subprocess, it no longer works there.
         # **********
-        self.loader = ctx.Process(target=Load, args=(conn_recver, shared_data, transitions_sampling_memory, array_shape, self.batch_update_queue, self.inputs, self.tree, (sampling_queue, conn3)))
+        self.loader = ctx.Process(target=Load, args=(conn_recver, shared_data, transitions_sampling_memory, array_shape, self.batch_update_queue, self.inputs, self.tree, (sampling_queue, conn3), random.randrange(0,2**32-1)))
         self.sampling_recv = sampling_queue
         self.sampling_request = conn4
         self.sampling_request_recv_head = conn3
@@ -451,7 +452,7 @@ def compiled_sampling(n, data_size, total_p, beta, length, tree, capacity, tree_
     v_rand = np.random.rand(n)
     for i in range(n):
         #a , b = pri_seg * i , pri_seg * (i + 1) 
-        v = (i+v_rand[i])*pri_seg #np.random.uniform(a, b)
+        v = (i+v_rand[i])*pri_seg
         idx, p, data = compiled_get_leaf(v, tree, capacity, tree_data)
         # sometimes it errors, so we need to check whether the "p" sampled out is valid
         if p == 0.: 
@@ -473,7 +474,8 @@ def compiled_batch_update(tree_idx,clipped_errors,alpha,tree):
     for ti, p in zip(tree_idx, ps):
         compiled_update(ti, p, tree)
 
-def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch_update_queue, inputs, tree_data, sampling_conns):
+def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch_update_queue, inputs, tree_data, sampling_conns, seed):
+    random.seed(seed); np.random.seed(seed)
     memory_in = Memory(**inputs, data_tree=tree_data)
     memory_in.set_transition_sampling_storage(\
                     np.frombuffer(Transitions_Sampling_Memory,dtype='float32').reshape(Memory_Shape))
@@ -481,7 +483,6 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
     pending_training_updates, episode, t_done, last_achieved_time = shared_data
     pause = False
     last_idle_time=0.
-    start_time = time.time()
     last_time = time.time()
     loaded = False
     while not loaded:
@@ -501,7 +502,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
             something_done = True; episode.value += 1
             experience, t, numerical_failure = MemoryQueue.get()
             num_of_sample = len(experience)
-            if train and num_of_sample == 0: train = False; learning_started = True; learning_in_progress_event.set()
+            if not args.train and train: train = False; learning_started = True; learning_in_progress_event.set()
             for i, array in enumerate(experience):
                 memory_in.store(array)
                 # This block takes a lot of time. We hope it can do sampling for training simultaneously.

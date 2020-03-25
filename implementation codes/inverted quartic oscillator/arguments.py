@@ -27,7 +27,7 @@ parser.add_argument('--save_dir', default='', type=str,
                     help='the directory to save trained models. It defaults to a conventional naming style that is "inputType_omega_gamma".')
 parser.add_argument('--control_strategy', default = 'DQN', choices=['DQN', 'damping', 'LQG', 'semiclassical'],
                     help='the control strategy to use to compare the different performances')
-parser.add_argument('--con_parameter', default = 0.9, type=float,
+parser.add_argument('--con_parameter', default = 1.9, type=float,
                     help='an additional undetermined control parameter for applying the damping or LQG control')
 parser.add_argument('--test', action='store_true',
                     help='whether to test existing trained models rather than to train')
@@ -49,17 +49,17 @@ parser.add_argument('--size_of_replay_memory', default = 8000, type=int,
                     help='the size of the replay memory that stores the accumulated experiences, in units of full-length time 100 episodes. Its default value is 5000.')
 parser.add_argument('--target_network_update_interval', default = 300, type=int,
                     help='the number of performed gradient descent steps before updating the target network. \nThe target network is a lazy copy of the currently trained network, i.e., it is updated to the current network only after sufficiently many gradient descent steps are done. It is used in DQN training to provide a more stable evaluation of the current Q value. The number of the gradient descent steps is this "target_network_update_interval" parameter.')
-parser.add_argument('--train_episodes_multiplicative', default = 2., type=float,
+parser.add_argument('--train_episodes_multiplicative', default = 3., type=float,
                     help=r'the multiplicative factor that rescales the default number of simulated episodes (20000), counted only when the learning is in progress. The counting of episodes will be reset to 1 when the controller achieves an average time of 20, and it will be reset again if the controller drops to an average time of 5. This rescaling factor also rescales the learning rate schedule, the save_interval, and the maximum_trails_before_giveup.')
 parser.add_argument('--maximum_trails_before_giveup', default = 40000, type=int,
                     help=r'the maximal number of simulated episodes when the learning does not proceed. If the simulated episodes exceed this value, we give up training.')
-parser.add_argument('--init_lr', default = 4e-4, type=float,
+parser.add_argument('--init_lr', default = 2e-3, type=float,
                     help='the initial learning rate. The learning rate will be decayed to 4e-5 at episode 1000, 8e-6 at 3000, 2e-6 at 5000, 4e-7 at 6500 and 1e-7 at 8000 when the current learning rate is higher.')
 parser.add_argument('--alive_reward', default = 10., type=float,
                     help='the reward of not falling for the AI')
 parser.add_argument('--input_scaling', default = 1., type=float,
                     help='a multiplicative factor of the input data to the AI. This is to avoid a possibly different scale between the input and the output of the AI, which may require too many unnecessary update steps during learning. This feature is set to 1 and thus disabled by default.')
-parser.add_argument('--num_of_actors', default = 50, type=int,
+parser.add_argument('--num_of_actors', default = 40, type=int,
                     help='the number of actors, i.e. the number of working processes that repeatedly do the control to accumulate experiences.')
 parser.add_argument('--show_actor_recv', action='store_true',
                     help='to signify when a new model is received by the actors during training')
