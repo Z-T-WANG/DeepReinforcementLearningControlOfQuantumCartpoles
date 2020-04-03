@@ -26,7 +26,7 @@ parser.add_argument('-c','--compile', action='store_true',
 
 # where to store models, whether to test models or LQG control
 parser.add_argument('--save_dir', default='', type=str,
-                    help='the directory to save trained models. It defaults to a conventional naming style that is "inputType_omega_gamma".')
+                    help='the directory to save trained models. It defaults to a conventional naming style that is "inputType_lambda_gamma".')
 parser.add_argument('--control_strategy', default = 'DQN', choices=['DQN', 'damping', 'LQG', 'semiclassical'],
                     help='the control strategy to use to compare the different performances')
 parser.add_argument('--con_parameter', default = 0.9, type=float,
