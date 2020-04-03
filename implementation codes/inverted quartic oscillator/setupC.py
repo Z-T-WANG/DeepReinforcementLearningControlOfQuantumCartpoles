@@ -5,7 +5,7 @@ import os, sys, shutil, glob
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--lambda_', default= -pi/100., type=float, metavar='\lambda',
+parser.add_argument('--lambda', default= -pi/100., type=float, metavar='\lambda',
                     help='the coefficent of the inverted quartic anharmonic oscillator (it should be negative)')
 parser.add_argument('--x_max', default=13, type=float, metavar='x_{max}',
                     help='the distance from the center to the border of the simulation space')
@@ -53,7 +53,7 @@ def compile(x_max, grid_size, mass, lambda_, moment):
     module1 = Extension(package_name,language='c++',
                     define_macros = [('X_MAX', str(x_max)), ('GRID_SIZE', repr(grid_size)), ('MASS',repr(mass)), ('LAMBDA', repr(lambda_)), ('MOMENT', str(moment))], # pass the defining parameters
                     include_dirs = [np.get_include(), os.path.join(os.environ['MKLROOT'],'include')], # set the includes
-                    sources = ['simulation_quart.cpp'], 
+                    sources = ['simulation_quart.cpp'],
                     extra_compile_args = compiler_options+['-Ofast','-funroll-loops', '-march=native', '-flto','-fuse-linker-plugin','--param', 'ipcp-unit-growth=2000', '-std=c++14','-fno-stack-protector','-fmerge-all-constants'], 
                     extra_link_args = link_options+['-Ofast','-fdelete-null-pointer-checks','-funroll-loops', '-march=native', '-fwhole-program','-flto','-fuse-linker-plugin','--param', 'ipcp-unit-growth=2000','-std=c++14','-fno-stack-protector','-fmerge-all-constants'])
 
@@ -73,4 +73,4 @@ def compile(x_max, grid_size, mass, lambda_, moment):
     if original_args_exist: sys.argv = [sys.argv[0]]+original_args
     else: sys.argv.pop(1)
 
-compile(x_max=args.x_max, grid_size=args.grid_size, mass=args.mass, lambda_=args.lambda_, moment=args.moment)
+compile(x_max=args.x_max, grid_size=args.grid_size, mass=args.mass, lambda_=args.__dict__['lambda'], moment=args.moment)

@@ -519,7 +519,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
                     if t < t_max:
                         last_achieved_time.value = t
                     else:
-                        print('\nSet the counting of Episodes')
+                        print(colored('\nReset the counting of Episodes', 'yellow',attrs=['bold']))
                         episode.value = 1; failure_counter = 0
                         last_achieved_time.value = t
                         last_episode = 1

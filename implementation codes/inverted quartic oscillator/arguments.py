@@ -24,7 +24,7 @@ parser.add_argument('-c','--compile', action='store_true',
 
 # where to store models, whether to test models or LQG control
 parser.add_argument('--save_dir', default='', type=str,
-                    help='the directory to save trained models. It defaults to a conventional naming style that is "inputType_omega_gamma".')
+                    help='the directory to save trained models. It defaults to a conventional naming style that is "inputType_lambda_gamma".')
 parser.add_argument('--control_strategy', default = 'DQN', choices=['DQN', 'damping', 'LQG', 'semiclassical'],
                     help='the control strategy to use to compare the different performances')
 parser.add_argument('--con_parameter', default = 1.9, type=float,
@@ -76,7 +76,12 @@ parser.add_argument('--gpu_id', default = 0, type=int,
 parser.add_argument('--seed', default = -1, type=int,
                     help='the random seed. When not set, it is random by default.')
 
+parser.add_argument('--eta', default = 1., type=float,
+                    help='the measurement efficiency. \eta being smaller than 1 means that there are additional measurements performed by the environment but are ignored.')
+
 args = parser.parse_args()
+
+assert 0. < args.eta <= 1., "The measurement efficiency should be larger than 0 and equal to or smaller than 1. It is currently {:.3g}.".format(args.eta)
 
 num_of_discrete = math.floor(args.x_max/args.grid_size+1e-4)
 args.x_n = num_of_discrete*2+1

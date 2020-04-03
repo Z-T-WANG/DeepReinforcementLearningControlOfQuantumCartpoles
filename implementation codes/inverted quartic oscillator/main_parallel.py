@@ -533,6 +533,8 @@ if __name__ == '__main__':
             file_name, ext = os.path.splitext(os.path.basename(name))
             if (ext=='.pth' or ext=='') and os.path.isfile(name): test_nets.append((file_name, torch.load(name)))
         assert len(test_nets)!=0, 'No model found to test'
+        from utilities import isfloat, isint
+        test_nets = sorted([t for t in test_nets if isfloat(t[0])], key = lambda t: float(t[0])) + sorted([t for t in test_nets if not isfloat(t[0])])
         # for each model we run the main loop once
         for test_net in test_nets:
             net.load_state_dict(test_net[1])

@@ -420,7 +420,7 @@ static PyObject* simulate_10_steps(PyObject *self, PyObject *args){
     return Py_BuildValue("ddi", q, x_mean, Fail); 
 }
 static void check_boundary_error(MKL_Complex16* psi, int* Fail){
-    if ( cblas_dznrm2(5, &(psi[n_max+1-5]), 1)>1.e-3){
+    if ( cblas_dznrm2(5, &(psi[n_max+1-5]), 1)>2.e-3){
         *Fail = 1; 
         }
 }

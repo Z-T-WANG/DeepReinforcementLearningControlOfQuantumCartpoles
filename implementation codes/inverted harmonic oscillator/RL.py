@@ -142,7 +142,7 @@ class TrainDQN(object):
         # prepare to train
         self.net, self.target_net = self.net.cuda(), self.target_net.cuda()
         # the optimizer ***
-        self.optim = LaProp(self.net.parameters(), lr=args.lr, centered=True) #,amsgrad=True , centered=True
+        self.optim = LaProp(self.net.parameters(), lr=args.lr, centered=True, betas=(0.9,0.9995)) #,amsgrad=True , centered=True
         self.net.train()
         self.target_net.train()
 
@@ -203,7 +203,7 @@ class TrainDQN(object):
         # call by index will reduce the number of dim by 1 at the called dimension
         state_action_values = action_values.gather(1, transitions[:,-2].cuda().unsqueeze(1).long()).squeeze() + avg_value - action_values.mean(dim=1)
         # rescale the rewards by (1-\gamma_r)
-        rewards = (1-self.gamma) * self.alive_reward
+        rewards = (1.-self.gamma) * self.alive_reward
         fail_mask = (transitions[:,-1]==failing_reward).cuda()
         # up to the above line, the use of data in array "transitions" is over, so it can be updated by
         # the next batch data using a separate process to enhance the parallelization 
@@ -368,8 +368,8 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
     This Memory class is modified based on the original code from:
     https://github.com/jaara/AI-blog/blob/master/Seaquest-DDQN-PER.py
     """
-    epsilon = 0.01  # small amount to avoid zero priority
-    alpha = 0.3  # [0~1] convert the importance of TD error to priority
+    epsilon = 0.00001  # small amount to avoid zero priority
+    alpha = 0.2  # [0~1] convert the importance of TD error to priority
     beta = 0.2  # importance-sampling, from initial value increasing to 1
     beta_increment_per_sampling = 0.001
     abs_err_upper = 1.  # clipped abs error
@@ -439,7 +439,7 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
         if hasattr(self,'batch_update_queue'):
             self.batch_update_queue.put((tree_idx, abs_errors))
             return
-        self.epsilon = 0.01 * self.max
+        self.epsilon = 0.00001 * self.max
         abs_errors += self.epsilon  # avoid 0
         clipped_errors = np.minimum(abs_errors, self.abs_err_upper)
         compiled_batch_update(tree_idx,clipped_errors,self.alpha,self.tree.tree)
@@ -449,7 +449,7 @@ class Memory(object):  # stored as ( s, action, reward ) in SumTree
 def compiled_sampling(n, data_size, total_p, beta, length, tree, capacity, tree_data, transition_storage):
     pri_seg = total_p / n
     b_idx, ISWeights = np.empty((n,), dtype=np.int32), np.empty((n, ), dtype=np.float32)
-    v_rand = np.random.rand(n)
+    v_rand = np.random.rand(n) # \in [0., 1.)
     for i in range(n):
         #a , b = pri_seg * i , pri_seg * (i + 1) 
         v = (i+v_rand[i])*pri_seg
@@ -461,8 +461,8 @@ def compiled_sampling(n, data_size, total_p, beta, length, tree, capacity, tree_
             while p == 0.:
                 v = (b - a) * np.random.random_sample() + a
                 idx, p, data = compiled_get_leaf(v, tree, capacity, tree_data)
-        prob = p / total_p
-        ISWeights[i] = np.power(length*prob, -beta)
+        avg_prob = total_p/length
+        ISWeights[i] = np.power(p/avg_prob, -beta)
         b_idx[i], transition_storage[i] = idx, data
     # the sampled transitions from memory is already updated in the given transition_storage array
     # !!! take care of the asynchronous access to the "transitions" array !!!
@@ -525,7 +525,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
                 if last_achieved_time.value >= 20. and not learning_started: 
                     learning_started = True
                     learning_in_progress_event.set()
-                    print('\nSet the counting of Episodes')
+                    print(colored('\nReset the counting of Episodes', 'yellow',attrs=['bold']))
                     episode.value = 1; last_episode = 1
                     i_report = 0; accu_t = 0.; numerical_failure_count = 0; numerical_failure_episode_count = 0
                 # decide whether the performance has fallen back after it has started (we use the threshold 5)

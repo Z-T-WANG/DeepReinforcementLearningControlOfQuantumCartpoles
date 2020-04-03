@@ -179,8 +179,6 @@ def Control(net, pipes, shared_buffer, seed, idx):
     MemoryQueue, ResultsQueue, ActionPipe, EndEvent, PauseEvent = pipes
     state_data_to_manager = np.frombuffer(shared_buffer,dtype='float32')
     if args.input=='measurements': state_data_to_manager = state_data_to_manager.reshape(shape_measurement_data)
-    if args.write_training_data and args.train:
-        if os.path.isfile(args.folder_name + '.txt'): os.remove(args.folder_name + '.txt')
     # random action decision hyperparameters
     EPS_START = 0.05
     EPS_END = 0.0002
@@ -324,6 +322,8 @@ def worker_manager(net, pipes, num_of_processes, seed, others):
     torch.set_grad_enabled(False)
     # prepare the path
     if not os.path.isdir(args.folder_name): os.makedirs(args.folder_name, exist_ok=True)
+    if args.write_training_data and args.train:
+        if os.path.isfile(args.folder_name + '.txt'): os.remove(args.folder_name + '.txt')
     # prepare workers
     import multiprocessing as mp
     from multiprocessing.sharedctypes import RawArray
@@ -595,6 +595,8 @@ if __name__ == '__main__':
             file_name, ext = os.path.splitext(os.path.basename(name))
             if (ext=='.pth' or ext=='') and os.path.isfile(name): test_nets.append((file_name, torch.load(name)))
         assert len(test_nets)!=0, 'No model found to test'
+        from utilities import isfloat, isint
+        test_nets = sorted([t for t in test_nets if isfloat(t[0])], key = lambda t: float(t[0])) + sorted([t for t in test_nets if not isfloat(t[0])])
         # for each model we run the main loop once
         for test_net in test_nets:
             if test_net[1].__class__ == RL.direct_DQN: net.load_state_dict(test_net[1].state_dict())

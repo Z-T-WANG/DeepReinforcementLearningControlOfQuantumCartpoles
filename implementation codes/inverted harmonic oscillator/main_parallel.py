@@ -182,7 +182,7 @@ def Control(net, pipes, shared_buffer, seed, idx):
     if args.input=='measurements': state_data_to_manager = state_data_to_manager.reshape(shape_measurement_data)
     # random action decision hyperparameters
     EPS_START = 0.1
-    EPS_END = 0.002
+    EPS_END = 0.003
     EPS_DECAY = args.n_con*100*300
     # initialization
     steps_done = 0
@@ -209,7 +209,7 @@ def Control(net, pipes, shared_buffer, seed, idx):
         eps_threshold = (EPS_START-EPS_END) * exp(-1. * steps_done / EPS_DECAY)
         eps_threshold += EPS_END
         steps_done += args.num_of_actors # this approximates the total steps_done of all the actors
-        if random.random() < eps_threshold and not args.test:
+        if random.random() < eps_threshold and args.train:
             last_action=random.randrange(no_action_choice*2+1) 
             rnd = True
         else:
@@ -545,13 +545,18 @@ if __name__ == '__main__':
             # the learning rate schedule is written in "arguments.py"
             if self.train.backup_period != self.backup_period and self.learning_in_progress_event.is_set():
                 self.train.backup_period = self.backup_period
+                if 4.e-4 < args.lr:
+                    args.lr = min(4.e-4, args.lr)
+                    if args.train:
+                        for param_group in self.train.optim.param_groups: param_group['lr'] = args.lr
+                        print(colored('learning rate set to {:.2g}'.format(args.lr),attrs=['bold']))
             if self.episode.value > args.lr_schedule[self.lr_step][0] and self.learning_in_progress_event.is_set():
                 args.lr = min(args.lr_schedule[self.lr_step][1], args.lr)
                 self.lr_step += 1
                 if args.train:
                     for param_group in self.train.optim.param_groups: param_group['lr'] = args.lr
                     print(colored('learning rate set to {:.2g}'.format(args.lr),attrs=['bold']))
-                    if self.lr_step == 1: self.train.gamma = 0.998 # change the reinforcement learning gamma when we first decay the learning rate
+                    #if self.lr_step == 1: self.train.gamma = 0.998 # change the reinforcement learning gamma when we first decay the learning rate
 
 
 
@@ -595,7 +600,7 @@ if __name__ == '__main__':
     net = RL.direct_DQN(data_size).cuda() if args.input != 'measurements' else RL.DQN_measurement(read_length)
     # set the task
     if args.train or args.LQG:
-        train = RL.TrainDQN(net, memory, batch_size = args.batch_size, gamma=0.99, backup_period = args.target_network_update_interval, args=args)
+        train = RL.TrainDQN(net, memory, batch_size = args.batch_size, gamma=0.998, backup_period = args.target_network_update_interval, args=args)
         del net
         # the main function of training
         if args.train: 
@@ -614,10 +619,12 @@ if __name__ == '__main__':
             file_name, ext = os.path.splitext(os.path.basename(name))
             if (ext=='.pth' or ext=='') and os.path.isfile(name): test_nets.append((file_name, torch.load(name)))
         assert len(test_nets)!=0, 'No model found to test'
+        from utilities import isfloat, isint
+        test_nets = sorted([t for t in test_nets if isfloat(t[0])], key = lambda t: float(t[0])) + sorted([t for t in test_nets if not isfloat(t[0])])
         # for each model we run the main loop once
         for test_net in test_nets:
             net.load_state_dict(test_net[1])
-            train = RL.TrainDQN(net, memory, batch_size = args.batch_size, gamma=0.99, backup_period = args.target_network_update_interval, args=args)
+            train = RL.TrainDQN(net, memory, batch_size = args.batch_size, gamma=0.998, backup_period = args.target_network_update_interval, args=args)
             main = Main_System(train, num_of_processes=args.num_of_actors, others=test_net[0])
             main(args.num_of_test_episodes)
         del net

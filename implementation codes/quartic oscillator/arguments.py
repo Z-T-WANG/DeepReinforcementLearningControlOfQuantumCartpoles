@@ -13,13 +13,13 @@ parser.add_argument('--grid_size', default=0.1, type=float, metavar='h',
                     help='the number of discretization points of the simulated space')
 parser.add_argument('--gamma', default = 0.01 , type=float, metavar='\gamma',
                     help='the measurement strength \gamma on the particle multiplied by a factor of \pi')
-parser.add_argument('--time_steps', default = 360*4, type=int,
+parser.add_argument('--time_steps', default = 360*4 *1, type=int,
                     help="the number of time steps for simulating time 1. The default is 360*4. Usually we don't need to change it.")
 parser.add_argument('--n_con', default = 18, type=int, metavar='n_{con}',
                     help=r'the number of control steps per time 1 or \frac{1}{\omega_c}. For simplicity, it is required to divide the number of time steps per time 1.')
 parser.add_argument('--F_max', default = 5., type=float, metavar='F_{max}',
                     help=r'the maximum control force allowed, multiplied by a factor of \pi, i.e. in units of \pi\sqrt{\hbar m_c \omega_c^3}.')
-parser.add_argument('--energy_cutoff', default = 10., type=float,
+parser.add_argument('--energy_cutoff', default = 12., type=float,
                     help=r'the maximum energy we allow during simulation, beyond which we will stop the simulation so as to avoid high energy samples to be learned by the AI. This is to both stabilize the learning and avoid high numerical error.')
 parser.add_argument('-c','--compile', action='store_true',
                     help='whether to force a compilation if a existing file exist')
@@ -78,7 +78,12 @@ parser.add_argument('--gpu_id', default = 0, type=int,
 parser.add_argument('--seed', default = -1, type=int,
                     help='the random seed. When not set, it is random by default.')
 
+parser.add_argument('--eta', default = 1., type=float,
+                    help='the measurement efficiency. \eta being smaller than 1 means that there are additional measurements performed by the environment but are ignored.')
+
 args = parser.parse_args()
+
+assert 0. < args.eta <= 1., "The measurement efficiency should be larger than 0 and equal to or smaller than 1. It is currently {:.3g}.".format(args.eta)
 
 num_of_discrete = math.floor(args.x_max/args.grid_size+1e-4)
 args.x_n = num_of_discrete*2+1

@@ -68,7 +68,12 @@ parser.add_argument('--gpu_id', default = 0, type=int,
 parser.add_argument('--seed', default = -1, type=int,
                     help='the random seed. When not set, it is random by default.')
 
+parser.add_argument('--eta', default = 1., type=float,
+                    help='the measurement efficiency. \eta being smaller than 1 means that there are additional measurements performed by the environment but are ignored.')
+
 args = parser.parse_args()
+
+assert 0. < args.eta <= 1., "The measurement efficiency should be larger than 0 and equal to or smaller than 1. It is currently {:.3g}.".format(args.eta)
 
 # set the default size of replay memory
 if args.size_of_replay_memory==0:
@@ -78,7 +83,7 @@ if args.size_of_replay_memory==0:
                                                                         # if we optimize, many assumtions and strategies of its memory management
                                                                         # need to be different and inconsistent with the cases of other inputs
 args.num_of_episodes = round(20000*args.train_episodes_multiplicative)
-args.lr_schedule = [(round(t[0]*args.train_episodes_multiplicative) if t[0]!=float('inf') else t[0], t[1]) for t in [(6000,8e-5), (11000,2e-5), (14000,4e-6), (16000,8e-7), (18000,2e-7), (20000, 0.)]]
+args.lr_schedule = [(round(t[0]*args.train_episodes_multiplicative) if t[0]!=float('inf') else t[0], t[1]) for t in [(6000,8e-5), (11000,2e-5), (15000,4e-6), (17000,8e-7), (19000,2e-7), (21000, 0.)]]
 args.save_interval=round(args.save_interval*args.train_episodes_multiplicative)
 # set the default learning rate
 args.lr = args.init_lr

@@ -523,7 +523,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
                 if last_achieved_time.value >= 12. and not learning_started: 
                     learning_started = True
                     learning_in_progress_event.set()
-                    print('\nSet the counting of Episodes')
+                    print(colored('\nReset the counting of Episodes', 'yellow',attrs=['bold']))
                     episode.value = 1; last_episode = 1
                     i_report = 0; accu_t = 0.; numerical_failure_count = 0; numerical_failure_episode_count = 0
                 # decide whether the performance has fallen back after it has started (we use the threshold 5)

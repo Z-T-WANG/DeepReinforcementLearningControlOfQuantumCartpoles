@@ -18,13 +18,12 @@ class FactorizedNoisy(nn.Module):
         self.u_b = nn.Parameter(torch.Tensor(out_features))
         self.sigma_b = nn.Parameter(torch.Tensor(out_features))
         self.reset_parameters()
-        self.weight_norm = Parameter(torch.tensor(self.u_w.norm().item()))#
         self.noisy = True
 
     def reset_parameters(self):
         stdv = 1. / math.sqrt(self.u_w.size(1))
         nn.init.kaiming_uniform_(self.u_w.data, mode='fan_in', nonlinearity='relu')
-        nn.init.uniform_(self.u_b.data, -stdv, stdv)
+        self.u_b.data.zero_()
 
         initial_sigma = 0.5 * stdv
         self.sigma_w.data.fill_(initial_sigma)
@@ -50,7 +49,7 @@ class FactorizedNoisy(nn.Module):
             epsilon_w = torch.bmm(rand_out, rand_in)
             epsilon_b = rand_out.squeeze(dim=2)
 
-            w = self.u_w/self.u_w.norm()*self.weight_norm + self.sigma_w * epsilon_w
+            w = self.u_w + self.sigma_w * epsilon_w
             b = self.u_b + self.sigma_b * epsilon_b
             b.unsqueeze_(dim=1)
             output = torch.baddbmm(b, x, w.transpose(1,2))
@@ -67,7 +66,7 @@ class FactorizedNoisy(nn.Module):
                 epsilon_w = torch.bmm(rand_out, rand_in)
                 epsilon_b = rand_out.squeeze(dim=2)
             else: epsilon_w, epsilon_b = noise
-            w = self.u_w/self.u_w.norm()*self.weight_norm + self.sigma_w * epsilon_w 
+            w = self.u_w + self.sigma_w * epsilon_w 
             # the first dimension of epsilon_w is the random sampling batch,
             b = self.u_b + self.sigma_b * epsilon_b # which equals the second dimension of x
             b.unsqueeze_(dim=1)

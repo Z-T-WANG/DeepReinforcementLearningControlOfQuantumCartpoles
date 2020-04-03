@@ -520,7 +520,7 @@ def Load(LoadPipe, shared_data, Transitions_Sampling_Memory, Memory_Shape, batch
 
             if t != t_max:
                 if Fail: numerical_failure_count = numerical_failure_count + 1
-                if (last_achieved_time.value==t_max and episode.value%2==0) or episode.value%10==0:
+                if last_achieved_time.value==t_max or episode.value%10==0:
                     Fail_reason = 'border error halt' if Fail else 'high energy halt'
                     print('Episode {}\tt = {:.2f}\t{}'.format(episode.value, t, Fail_reason))
             elif episode.value%2==0:

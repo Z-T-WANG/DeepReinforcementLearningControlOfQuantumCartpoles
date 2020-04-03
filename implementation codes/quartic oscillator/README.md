@@ -4,7 +4,7 @@ For reference, the commands we have used to produce the results in our paper are
 
 python3 main_parallel.py --input xp --input_scaling 0.1 --init_lr 2.e-3 --seed 1
 
-python3 main_parallel.py --input wavefunction --init_lr 1.e-3 --energy_cutoff 12. --seed 0　
+python3 main_parallel.py --input wavefunction --init_lr 1.e-3 --seed 0　
 
 python3 main_parallel.py --control_strategy damping --con_parameter 0.4
 
