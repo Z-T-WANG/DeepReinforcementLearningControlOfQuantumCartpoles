@@ -8,6 +8,8 @@ The system parameters for the quadratic systems are ```gamma``` and the level of
 
 When one changes a system parameter that increases the simulated maximal energy, the number of time steps ```time_steps``` parameter must be increased accordingly to prevent numerical divergence. Namely, it should be proportionally to ```n_max```, or proportional to the maximum between the square of ```grid_size``` and ```lambda``` times the forth of ```x_max```. Note that specifically for the quartic cartpole problem, the spatial discretization must be dense enough so that the wavefunction can obtain a sufficiently short wavelength as it obtains kinetic energy when going off the potential; otherwise it would not be able to accelerate or move away from the center.
 
+Other settings concerned with the reinforcement learning progress are detailed in the notations in the scripts.
+
 ### Code Organization
 Our implementation basically includes three different submodules. The first is the quantum simulation submodule, which is coded in ```simulation.cpp``` and is compiled for Python by invoking the script ```setupC.py```. The second one is the deep learning submodule, which includes the reinforcement learning algorithm, prioritized sampling and the neural networks, which are coded in ```layers.py``` ```optimizer.py``` and ```RL.py```. The last submodule is the manager of the whole system, which controls the workers that carry out the quantum simulation and controls the reinforcement learning progress, which is written in ```main_parallel.py```. 
 The script ```main_parallel.py``` first receives and processes the arguments defined in ```arguments.py``` and checks the C++ quantum simulation module, and then it allocates memory and starts parallelized training/testing.
