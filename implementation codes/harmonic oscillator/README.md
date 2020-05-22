@@ -9,3 +9,5 @@ The commands that we have used to produce our results are:
 ```python main_parallel.py --input wavefunction --phonon_cutoff 10 --reward_scale_up 1.```
 
 ```python main_parallel.py --input measurements```
+
+```python main_parallel.py --LQG```
