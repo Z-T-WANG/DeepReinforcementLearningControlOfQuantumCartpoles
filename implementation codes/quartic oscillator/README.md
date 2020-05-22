@@ -9,4 +9,5 @@ To test the trained models, simple add argument ```--test```.
 The control strategies of the comparison group are tested by\
 ```python3 main_parallel.py --control_strategy damping --con_parameter 0.4```\
 ```python3 main_parallel.py --control_strategy LQG --con_parameter 2.8```\
-```python3 main_parallel.py --control_strategy semiclassical```
+```python3 main_parallel.py --control_strategy semiclassical```\
+where the ```con_parameter``` is determined by our grid search.
