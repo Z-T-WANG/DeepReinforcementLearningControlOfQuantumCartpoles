@@ -2,7 +2,7 @@ When using measurement outcomes as the input, the network receives a large numbe
 
 
 
-The commands that we have used to produce our results are:
+The commands that we have used to produce our results are
 
 ```python main_parallel.py --input xp```
 
@@ -10,4 +10,6 @@ The commands that we have used to produce our results are:
 
 ```python main_parallel.py --input measurements```
 
-```python main_parallel.py --LQG```
+and to test the trained models, simply add the argument ```--test```.
+
+The LQG control is estimated by ```python main_parallel.py --LQG```
