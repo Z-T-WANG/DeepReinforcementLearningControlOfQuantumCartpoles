@@ -4,9 +4,9 @@ When using measurement outcomes as the input, the network receives a large numbe
 
 The commands that we have used to produce our results are
 
-```python main_parallel.py --input xp```\\
-```python main_parallel.py --input wavefunction --phonon_cutoff 10 --reward_scale_up 1.```\\
-```python main_parallel.py --input measurements```\\
+```python main_parallel.py --input xp```\
+```python main_parallel.py --input wavefunction --phonon_cutoff 10 --reward_scale_up 1.```\
+```python main_parallel.py --input measurements```\
 
 and to test the trained models, simply add argument ```--test```.
 
